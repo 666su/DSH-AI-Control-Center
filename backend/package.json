@@ -1,0 +1,19 @@
+{
+  "name": "dsh-control-center-backend",
+  "version": "1.0.0",
+  "description": "DSH AI Control Center backend — DSH status, task management, system monitoring",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "systeminformation": "^5.23.5"
+  }
+}

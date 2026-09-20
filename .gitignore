@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+
+# 前端构建产物（后端首次运行前请先 npm run build）
+frontend/dist/
+
+# 运行时数据 / 日志
+backend/data/
+logs/
+*.log
+
+# 个人配置（请勿提交；用 config.example.json 作为模板）
+config/config.json
+config/access-token.txt
+config/env-report.txt
+
+# 二进制（请自行从官网下载）
+scripts/nssm.exe
+scripts/cloudflared.exe
+
+# 系统
+.DS_Store
+Thumbs.db

@@ -1,0 +1,46 @@
+{
+  "_说明": "请把本文件复制为 config.json 并填写你自己的值；带 YOUR_ 前缀的是必须/可选更改项。安全加固：dsh.proxyHost 填 DSH Web 的公网子域名（如 dshui.YOUR_DOMAIN）时，该域名会自动走控制中心的受保护代理（必须登录控制中心）；server.cookieDomain 填 .YOUR_DOMAIN 让子域名共享登录 cookie；server.publicUrl 填控制中心自身公网地址。",
+  "server": {
+    "port": 3081,
+    "host": "0.0.0.0",
+    "token": "",
+    "cookieDomain": "",
+    "publicUrl": ""
+  },
+  "dsh": {
+    "webUrl": "http://127.0.0.1:3080",
+    "port": 3080,
+    "logFile": "E:\\YOUR_WORKSPACE\\dsh.log",
+    "startCommand": "npx --yes @deepseek-ai/dsh web --no-open",
+    "startCwd": "E:\\YOUR_WORKSPACE",
+    "healthTimeoutMs": 2000,
+    "publicUrl": "",
+    "userProfile": "C:\\Users\\YOUR_USERNAME",
+    "proxyHost": ""
+  },
+  "monitor": {
+    "intervalMs": 5000,
+    "historyRetentionHours": 48
+  },
+  "recovery": {
+    "intervalMs": 30000,
+    "autoRestart": true,
+    "failThreshold": 3,
+    "bootGraceMs": 90000,
+    "processYoungMs": 30000,
+    "launchWaitMs": 60000,
+    "cooldownsMs": [
+      30000,
+      60000,
+      120000
+    ],
+    "maxAttempts": 3
+  },
+  "tasks": {
+    "defaultWorkspace": "E:\\YOUR_WORKSPACE"
+  },
+  "notify": {
+    "enabled": false,
+    "channels": []
+  }
+}
