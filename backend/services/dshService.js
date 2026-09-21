@@ -10,6 +10,13 @@ import { addLog, nowIso } from '../database/db.js';
 
 const execFileP = promisify(execFile);
 
+/** 本地实时时间戳 (YYYY-MM-DD HH:mm:ss)，写入 dsh.log 时与 DSH 自身输出对齐（避免 UTC 差 8 小时） */
+function localTs() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
 /** TCP check: is something listening on the DSH web port? */
 /** HTTP probe: does the DSH web server respond? (status < 500 counts as alive). */
 export function httpProbe(port = config.dsh.port, host = '127.0.0.1') {
@@ -195,6 +202,7 @@ export function buildSpawnEnv() {
 function resolveNpx() {
   const candidates = [
     process.env.npx_cmd || process.env.npm_config_npx,
+    'E:\\app\\node.js\\npx.cmd',
     'npx.cmd'
   ];
   for (const c of candidates) {
@@ -216,7 +224,7 @@ export async function restart() {
     await new Promise(r => setTimeout(r, 500));
   }
 
-  try { fs.appendFileSync(config.dsh.logFile, `\n[${nowIso()}] control-center restart DSH\n`); } catch { /* ignore */ }
+  try { fs.appendFileSync(config.dsh.logFile, `\n[${localTs()}] control-center restart DSH\n`); } catch { /* ignore */ }
 
   // 关键: cmd 自身文件重定向捕获 DSH 输出（Node stdio 流在服务环境下丢 token）
   const redirectCmd = `${config.dsh.startCommand} >> "${config.dsh.logFile}" 2>&1`;
@@ -231,7 +239,7 @@ export async function restart() {
   addLog('info', 'dsh', `DSH relaunching (pid ${child.pid}) via: ${config.dsh.startCommand}`);
 
   // wait for port up (max 60s)
-  for (let i = 0; i < 120; i++) {
+  for (let i = 0; i < 360; i++) {
     if (await checkPort()) {
       const status = await getStatus();
       addLog('info', 'dsh', `DSH restarted successfully, pid=${status.pid}, url=${status.webUrl}`);
@@ -251,7 +259,7 @@ export async function start() {
     return { ok: true, alreadyRunning: true, status };
   }
   addLog('info', 'dsh', 'start requested');
-  try { fs.appendFileSync(config.dsh.logFile, '\n[' + nowIso() + '] control-center start DSH\n'); } catch { /* ignore */ }
+  try { fs.appendFileSync(config.dsh.logFile, '\n[' + localTs() + '] control-center start DSH\n'); } catch { /* ignore */ }
   // 关键: cmd 自身文件重定向捕获 DSH 输出
   const redirectCmd = config.dsh.startCommand + ' >> "' + config.dsh.logFile + '" 2>&1';
   const child = spawn('cmd.exe', ['/d', '/c', redirectCmd], {
@@ -268,7 +276,7 @@ export async function start() {
     }
     await new Promise(r => setTimeout(r, 500));
   }
-  addLog('error', 'dsh', 'DSH did not come up within 60s after start');
+  addLog('error', 'dsh', 'DSH did not come up within 180s after start');
   return { ok: false, status: await getStatus() };
 }
 
