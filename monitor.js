@@ -43,7 +43,8 @@ function loadConfig() {
       startCommand: 'npx --yes @deepseek-ai/dsh web --no-open',
       startCwd: __dirname,
       healthTimeoutMs: 2000,
-      userProfile: ''
+      userProfile: '',
+      serviceName: ''
     },
     recovery: {
       intervalMs: 30000,
@@ -248,15 +249,26 @@ async function cycle() {
   await new Promise(r => setTimeout(r, 1000));
 
   try { fs.appendFileSync(config.dsh.logFile, `\n[${ts()}] monitor.js recovery restart (attempt ${attempt})\n`); } catch { /* ignore */ }
-  // 关键: 用 cmd 自身的文件重定向捕获 DSH 输出（Node stdio 流在服务环境下会丢 token 输出）
-  const redirectCmd = `${config.dsh.startCommand} >> "${config.dsh.logFile}" 2>&1`;
-  const child = spawn('cmd.exe', ['/d', '/c', redirectCmd], {
-    cwd: config.dsh.startCwd, detached: true, windowsHide: true,
-    stdio: 'ignore', env: buildSpawnEnv()
-  });
-  child.unref();
+  const svc = config.dsh.serviceName || '';
+  if (svc) {
+    // NSSM 服务模式：net start（服务环境下 npx 重新下载 + 找不到用户目录，必须走服务）
+    try {
+      await execFileP('net', ['start', svc], { timeout: 30000, windowsHide: true });
+      log(`LAUNCHED: net start ${svc} | boot grace ${fmtMs(config.recovery.bootGraceMs)}`);
+    } catch (e) {
+      log(`net start ${svc} failed: ${e.message}`);
+    }
+  } else {
+    // 直接模式：npx spawn（cmd 自身文件重定向捕获 DSH 输出）
+    const redirectCmd = `${config.dsh.startCommand} >> "${config.dsh.logFile}" 2>&1`;
+    const child = spawn('cmd.exe', ['/d', '/c', redirectCmd], {
+      cwd: config.dsh.startCwd, detached: true, windowsHide: true,
+      stdio: 'ignore', env: buildSpawnEnv()
+    });
+    child.unref();
+    log(`LAUNCHED: '${config.dsh.startCommand}' (wrapper pid ${child.pid}) | boot grace ${fmtMs(config.recovery.bootGraceMs)}`);
+  }
   launchUntil = Date.now() + config.recovery.bootGraceMs;
-  log(`LAUNCHED: '${config.dsh.startCommand}' (wrapper pid ${child.pid}) | boot grace ${fmtMs(config.recovery.bootGraceMs)}`);
 
   // wait for port up (bounded)
   const waitStart = Date.now();

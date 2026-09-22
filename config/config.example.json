@@ -1,5 +1,5 @@
 {
-  "_说明": "请把本文件复制为 config.json 并填写你自己的值；带 YOUR_ 前缀的是必须/可选更改项。安全加固：dsh.proxyHost 填 DSH Web 的公网子域名（如 dshui.YOUR_DOMAIN）时，该域名会自动走控制中心的受保护代理（必须登录控制中心）；server.cookieDomain 填 .YOUR_DOMAIN 让子域名共享登录 cookie；server.publicUrl 填控制中心自身公网地址。",
+  "_说明": "请把本文件复制为 config.json 并填写你自己的值；带 YOUR_ 前缀的是必须/可选更改项。安全加固：dsh.proxyHosts 填 DSH Web 的公网子域名数组（如 [dsh.YOUR_DOMAIN]）时，这些域名会自动走控制中心的受保护代理（必须登录控制中心才能访问 DSH）；server.cookieDomain 填 .YOUR_DOMAIN 让子域名共享登录 cookie；server.publicUrl 填控制中心自身公网地址。dsh.serviceName 填 NSSM 服务名（如 DeepSeekHarness）后，启停走 net start/stop（服务化部署推荐），留空则走 npx 直接启动。",
   "server": {
     "port": 3081,
     "host": "0.0.0.0",
@@ -16,7 +16,9 @@
     "healthTimeoutMs": 2000,
     "publicUrl": "",
     "userProfile": "C:\\Users\\YOUR_USERNAME",
-    "proxyHost": ""
+    "proxyHost": "",
+    "proxyHosts": [],
+    "serviceName": ""
   },
   "monitor": {
     "intervalMs": 5000,

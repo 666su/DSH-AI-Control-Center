@@ -4,6 +4,63 @@
 
 ---
 
+## v1.2.0 — 2026-09-22
+
+### 🐛 Bug 修复
+
+#### 代理 POST 请求体丢失（核心修复）
+- **现象**：DSH 界面能打开、工作区列表能显示，但会话列表为空、点击「添加对话」无反应，浏览器 Console 全是 `ERR_CONNECTION_CLOSED`
+- **根因**：`server.js` 中 `express.json()` 注册在代理中间件**之前**，会把所有 `application/json` 的 POST 请求体消费掉；代理再 `req.pipe(proxyReq)` 转发时请求体已空，但 `content-length` 头仍是 184 → DSH 永远等不到 body → 不响应
+- **修复**：代理中间件移到 `express.json()` **之前**注册；代理域名请求直接转发（请求体完整），其他请求照常走 body 解析。GET 请求无请求体所以一直正常——这正是「页面能显示但对话失效」的原因
+
+#### WebSocket 升级 403 forbidden
+- **现象**：DSH 前端左下角一直「连接中」，WS 升级返回 `403 forbidden`
+- **根因**：DSH 的 `isTrustedApiRequest` 校验 `Origin` 头是否在 `--trusted-host` 白名单；公网域名不在列表即拒绝。代理转发时把浏览器原始 `Origin: https://公网域名` 原样带给 DSH
+- **修复**：转发 WS 升级头时剥离 `origin`（DSH 在 `Origin` 缺失时视为可信）；HTTP 代理同步剥离 `origin`、`sec-fetch-site`
+
+#### API 返回 400（content-length 被剥离）
+- **根因**：`HOP_BY_HOP` 逐跳头集合里包含 `content-length`，转发请求时一并剥离，导致 POST 请求体长度信息丢失，DSH 收到不完整 body 返回 400
+- **修复**：从 `HOP_BY_HOP` 移除 `content-length`（逐跳头不应包含它）
+
+#### 响应头 keep-alive 导致 ERR_CONNECTION_CLOSED
+- **根因**：代理把 DSH 响应的 `connection: keep-alive`、`keep-alive: timeout=5` 原样转发给浏览器，但代理自身在响应结束后关闭连接，浏览器按 keep-alive 等待后续数据 → `ERR_CONNECTION_CLOSED`
+- **修复**：转发响应时仅剥离 `connection` 和 `keep-alive`（逐跳头），保留 `transfer-encoding` 让 Node 正确处理 chunked 流式响应
+
+#### DSH 重启后代理用过期 cookie
+- **根因**：`mintDshCookie()` 仅在 token 变化时重新 mint，DSH 重启（token 不变但 cookie 失效）后仍返回旧缓存 cookie
+- **修复**：缓存加 5 秒 TTL（`CACHE_TTL_MS`）；未获取到新 cookie 时清空缓存
+
+### 🔒 安全清理
+
+- 代理调试日志不再输出 cookie 值：`mintDshCookie` 只记录 cookie 名；WS 转发头日志剥离 `cookie` 字段；HTTP 转发日志不再打印 cookie 片段
+- 非代理域名检测改用 `config.server.cookieDomain`（运行时配置），不再硬编码任何域名
+
+### 🚀 增强
+
+#### NSSM 服务化启停（可选）
+- 新增 `dsh.serviceName` 配置项（如 `DeepSeekHarness`）；填写后 `start()/stop()/restart()` 与 `monitor.js` 恢复拉起均走 `net start/stop`，彻底解决服务环境下 npx 重新下载 / 找不到用户主目录的问题
+- 留空则保持原有 npx 直接启动方式，向后兼容
+- `restart()` 在服务模式下执行 `net stop` → 等端口释放 → 5 秒缓冲（NSSM 完全停止需要时间）→ `net start`
+
+#### 多代理域名支持
+- 新增 `dsh.proxyHosts`（数组），与旧 `dsh.proxyHost`（单值）二选一；数组优先
+- `server.js` 构建 `PROXY_HOSTS` Set，匹配任意配置的代理域名
+
+#### WebSocket 升级代理增强
+- `server.js` 改用 `http.createServer(app)` 显式持有 server 对象，确保 `upgrade` 事件被可靠捕获
+- WS 代理新增非 101 响应处理（收集 body 用于诊断后关闭）、10 秒超时、详细日志
+
+#### 调试端点
+- 新增 `GET /api/debug/proxy` 返回代理配置（proxyHosts、accessToken 状态脱敏为 `***set***`），排查代理链路
+- `/api` 鉴权放行 `/health` 与 `/debug/`
+
+### 📝 配置变更
+
+- `config.js` / `config.example.json` 新增：`dsh.proxyHosts`（数组）、`dsh.serviceName`（字符串）
+- 升级建议：若以 NSSM 服务部署，在 `config.json` 的 `dsh` 段填 `"serviceName": "DeepSeekHarness"`
+
+---
+
 ## v1.1.0 — 2026-09-21
 
 ### 🆕 新功能

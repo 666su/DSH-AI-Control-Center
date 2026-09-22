@@ -202,7 +202,6 @@ export function buildSpawnEnv() {
 function resolveNpx() {
   const candidates = [
     process.env.npx_cmd || process.env.npm_config_npx,
-    'E:\\app\\node.js\\npx.cmd',
     'npx.cmd'
   ];
   for (const c of candidates) {
@@ -211,34 +210,51 @@ function resolveNpx() {
   return 'npx.cmd';
 }
 
-/** Restart DSH: kill processes, wait for port free, relaunch, wait for port up. */
+/** Restart DSH: stop (NSSM service or process kill), wait for port free, relaunch, wait for port up. */
 export async function restart() {
   addLog('info', 'dsh', 'restart requested');
-  const before = await findDshProcesses();
-  await killProcesses(before.map(p => p.pid));
+  const svc = config.dsh.serviceName || '';
 
-  // wait for port to free (max 15s)
-  for (let i = 0; i < 30; i++) {
-    const up = await checkPort();
-    if (!up) break;
-    await new Promise(r => setTimeout(r, 500));
+  if (svc) {
+    // NSSM 服务模式：net stop → 等端口释放 → 5s 缓冲 → net start
+    try {
+      await execFileP('net', ['stop', svc], { timeout: 30000, windowsHide: true });
+      addLog('info', 'dsh', `net stop ${svc} succeeded`);
+    } catch (e) {
+      addLog('warn', 'dsh', `net stop ${svc} returned: ${e.message}`);
+    }
+    for (let i = 0; i < 30; i++) {
+      if (!(await checkPort())) break;
+      await new Promise(r => setTimeout(r, 500));
+    }
+    // NSSM 完全停止服务需要额外缓冲，否则 net start 会因服务未就绪而失败
+    await new Promise(r => setTimeout(r, 5000));
+    try { fs.appendFileSync(config.dsh.logFile, `\n[${localTs()}] control-center restart DSH\n`); } catch { /* ignore */ }
+    try {
+      await execFileP('net', ['start', svc], { timeout: 30000, windowsHide: true });
+      addLog('info', 'dsh', `net start ${svc} succeeded`);
+    } catch (e) {
+      addLog('warn', 'dsh', `net start ${svc} returned: ${e.message}`);
+    }
+  } else {
+    // 直接模式：kill 进程 → 等端口释放 → npx spawn
+    const before = await findDshProcesses();
+    await killProcesses(before.map(p => p.pid));
+    for (let i = 0; i < 30; i++) {
+      const up = await checkPort();
+      if (!up) break;
+      await new Promise(r => setTimeout(r, 500));
+    }
+    try { fs.appendFileSync(config.dsh.logFile, `\n[${localTs()}] control-center restart DSH\n`); } catch { /* ignore */ }
+    const redirectCmd = `${config.dsh.startCommand} >> "${config.dsh.logFile}" 2>&1`;
+    const child = spawn('cmd.exe', ['/d', '/c', redirectCmd], {
+      cwd: config.dsh.startCwd, detached: true, windowsHide: true,
+      stdio: 'ignore', env: buildSpawnEnv()
+    });
+    child.unref();
+    addLog('info', 'dsh', `DSH relaunching (pid ${child.pid}) via: ${config.dsh.startCommand}`);
   }
 
-  try { fs.appendFileSync(config.dsh.logFile, `\n[${localTs()}] control-center restart DSH\n`); } catch { /* ignore */ }
-
-  // 关键: cmd 自身文件重定向捕获 DSH 输出（Node stdio 流在服务环境下丢 token）
-  const redirectCmd = `${config.dsh.startCommand} >> "${config.dsh.logFile}" 2>&1`;
-  const child = spawn('cmd.exe', ['/d', '/c', redirectCmd], {
-    cwd: config.dsh.startCwd,
-    detached: true,
-    windowsHide: true,
-    stdio: 'ignore',
-    env: buildSpawnEnv()
-  });
-  child.unref();
-  addLog('info', 'dsh', `DSH relaunching (pid ${child.pid}) via: ${config.dsh.startCommand}`);
-
-  // wait for port up (max 60s)
   for (let i = 0; i < 360; i++) {
     if (await checkPort()) {
       const status = await getStatus();
@@ -251,7 +267,7 @@ export async function restart() {
   return { ok: false, status: await getStatus() };
 }
 
-/** Start DSH if not already running. */
+/** Start DSH if not already running (NSSM service via net start, or npx spawn). */
 export async function start() {
   const status = await getStatus();
   if (status.state === 'running' || status.state === 'starting') {
@@ -260,15 +276,26 @@ export async function start() {
   }
   addLog('info', 'dsh', 'start requested');
   try { fs.appendFileSync(config.dsh.logFile, '\n[' + localTs() + '] control-center start DSH\n'); } catch { /* ignore */ }
-  // 关键: cmd 自身文件重定向捕获 DSH 输出
-  const redirectCmd = config.dsh.startCommand + ' >> "' + config.dsh.logFile + '" 2>&1';
-  const child = spawn('cmd.exe', ['/d', '/c', redirectCmd], {
-    cwd: config.dsh.startCwd, detached: true, windowsHide: true,
-    stdio: 'ignore', env: buildSpawnEnv()
-  });
-  child.unref();
-  addLog('info', 'dsh', 'DSH launching (pid ' + child.pid + ') via: ' + config.dsh.startCommand);
-  for (let i = 0; i < 120; i++) {
+  const svc = config.dsh.serviceName || '';
+  if (svc) {
+    // NSSM 服务模式：net start
+    try {
+      await execFileP('net', ['start', svc], { timeout: 30000, windowsHide: true });
+      addLog('info', 'dsh', `net start ${svc} succeeded`);
+    } catch (e) {
+      addLog('warn', 'dsh', `net start ${svc} returned: ${e.message}`);
+    }
+  } else {
+    // 直接模式：npx spawn（cmd 自身文件重定向捕获 DSH 输出）
+    const redirectCmd = config.dsh.startCommand + ' >> "' + config.dsh.logFile + '" 2>&1';
+    const child = spawn('cmd.exe', ['/d', '/c', redirectCmd], {
+      cwd: config.dsh.startCwd, detached: true, windowsHide: true,
+      stdio: 'ignore', env: buildSpawnEnv()
+    });
+    child.unref();
+    addLog('info', 'dsh', 'DSH launching (pid ' + child.pid + ') via: ' + config.dsh.startCommand);
+  }
+  for (let i = 0; i < 360; i++) {
     if (await checkPort()) {
       const st = await getStatus();
       addLog('info', 'dsh', 'DSH started successfully, pid=' + st.pid + ', url=' + st.webUrl);
@@ -280,11 +307,22 @@ export async function start() {
   return { ok: false, status: await getStatus() };
 }
 
-/** Stop DSH: kill all dsh processes and wait for the port to free. */
+/** Stop DSH: net stop (NSSM) or kill all processes, then wait for the port to free. */
 export async function stop() {
   addLog('info', 'dsh', 'stop requested');
+  const svc = config.dsh.serviceName || '';
+  if (svc) {
+    // NSSM 服务模式：net stop，再清理残留进程
+    try {
+      await execFileP('net', ['stop', svc], { timeout: 30000, windowsHide: true });
+      addLog('info', 'dsh', `net stop ${svc} succeeded`);
+    } catch (e) {
+      addLog('warn', 'dsh', `net stop ${svc} returned: ${e.message}`);
+    }
+  }
+  // 兜底：清理可能残留的 dsh 进程
   const procs = await findDshProcesses();
-  await killProcesses(procs.map(p => p.pid));
+  if (procs.length) await killProcesses(procs.map(p => p.pid));
   for (let i = 0; i < 30; i++) {
     if (!(await checkPort())) break;
     await new Promise(r => setTimeout(r, 500));

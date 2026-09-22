@@ -14,6 +14,8 @@ const defaults = {
     logFile: path.join(ROOT, 'dsh.log'),
     publicUrl: '',
     proxyHost: '',
+    proxyHosts: [],
+    serviceName: '',
     userProfile: '',
     startCommand: 'npx --yes @deepseek-ai/dsh web --no-open',
     startCwd: ROOT,
