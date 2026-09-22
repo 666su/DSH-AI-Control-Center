@@ -115,6 +115,8 @@ scripts\uninstall-service.bat    # 卸载
 > - `DSHControlCenter`：运行 `node backend/server.js`，日志写入 `logs/backend-service.log`（LocalSystem）
 > - `DSHControlMonitor`：运行 `node monitor.js`，日志写入 `logs/monitor-service.log`（LocalSystem）
 > - DSH 本体建议用你的 `start-dsh.bat` 或另外的 NSSM 服务启动，注意命令里带 `--no-open` 并把输出重定向到 `dsh.log`（见「token 捕获」）。
+>
+> **DSH 服务化启停**：若 DSH 也用 NSSM 注册为 Windows 服务（如 `DeepSeekHarness`），在 `config.json` 的 `dsh` 段填 `"serviceName": "DeepSeekHarness"`，控制中心的启动 / 停止 / 重启按钮将自动改用 `net start` / `net stop`（而非 npx spawn）。`monitor.js` 恢复守护也会优先用 `net start` 拉起。留空则保持 npx 直接启动方式。
 
 ---
 
@@ -135,7 +137,7 @@ DSH 原生 Web 拥有全部操作能力（会话、工作区、智能体），**
 
 1. 在 Cloudflare 隧道里把子域名 `dshui` 指向 `HTTP 127.0.0.1:3081`（控制中心，**不是** 3080）；
 2. 在 `config/config.json` 里配置：
-   `dsh.proxyHost` = `dshui.YOUR_DOMAIN`　(让该域名走代理)；
+   `dsh.proxyHosts` = [`dshui.YOUR_DOMAIN`]　(让该域名走代理)；
    `server.cookieDomain` = `.YOUR_DOMAIN`　(子域名共享登录 cookie)；
    `server.publicUrl` = `https://dsh.YOUR_DOMAIN`　(未登录时跳转控制中心登录页)；
 3. 之后任何人访问 `https://dshui.YOUR_DOMAIN`，**必须先登录控制中心**（输入访问密钥），否则一律 302 跳转到登录页；DSH 本体保持只监听 127.0.0.1（无需 `--trusted-host` 公网域名）。
@@ -184,7 +186,8 @@ DSH 原生 Web 拥有全部操作能力（会话、工作区、智能体），**
 | `tasks.defaultWorkspace` | `E:\YOUR_WORKSPACE` | ⚠️ 任务默认工作目录 |
 | `server.cookieDomain` | 空 | ⚠️ 启用 DSH 代理时填 `.YOUR_DOMAIN`，让 dshui 子域名共享控制中心登录 cookie |
 | `server.publicUrl` | 空 | ⚠️ 控制中心自身公网地址（未登录跳转用它，如 `https://dsh.YOUR_DOMAIN`） |
-| `dsh.proxyHost` | 空 | ⚠️ 填 DSH Web 公网子域名（如 `dshui.YOUR_DOMAIN`）即启用受保护代理 |
+| `dsh.proxyHosts` | [] | ⚠️ 数组，填 DSH Web 公网子域名（如 [\"dshui.YOUR_DOMAIN\"]）即启用受保护代理；支持多个域名 |
+| `dsh.serviceName` | 空 | 可选：NSSM 服务名（如 `DeepSeekHarness`）。填写后启停/恢复走 net start/stop，留空走 npx 直接启动 |
 | `recovery.*` | 见模板 | 恢复策略（连续失败阈值 3、冷却 30/60/120s、熔断上限 3） |
 
 ---
@@ -272,6 +275,8 @@ spawn('cmd.exe', ['/d', '/c', redirectCmd], { detached: true, stdio: 'ignore', e
 3. ✅ `scripts/install-cloudflared.bat`：替换 `YOUR_TUNNEL_TOKEN` 为你的 Cloudflare 隧道 token
 4. ✅ 下载 `nssm.exe` 放到 `scripts/`（本仓库不含二进制）
 5. ✅ （可选）`frontend/src/App.jsx` 页脚署名修改 / 去除
+6. ✅ `dsh.proxyHosts`：若通过 DSH 子域名访问 DSH Web，填 `["dsh.YOUR_DOMAIN"]`（受控制中心密码保护）
+7. ✅ `dsh.serviceName`：若 DSH 以 NSSM 服务运行，填 `"DeepSeekHarness"`（启停走 net start/stop）
 
 
 ## 模型选择
