@@ -222,9 +222,26 @@ button { font-family: inherit; }
 .btn.danger { background: #b91c1c; border-color: #b91c1c; }
 .btn.danger:hover { background: #991b1b; }
 
-/* ===== 作者署名页脚 ===== */
-.site-footer { border-top: 1px solid #23262d; padding: 14px 18px; margin-top: auto; background: #0d1117; }
-.footer-inner { max-width: 1200px; margin: 0 auto; display: flex; align-items: center; justify-content: center; gap: 8px; color: #8b949e; font-size: 13px; flex-wrap: wrap; }
-.site-footer a { color: #58a6ff; text-decoration: none; }
-.site-footer a:hover { text-decoration: underline; }
-.footer-dot { color: #484f58; }
+/* ---- 温度指标卡与历史曲线 ---- */
+.bar.red > div { background: linear-gradient(90deg, #da3633, #f85149); }
+.metric.metric-temp { background: linear-gradient(180deg, #1c2333, #171d2b); border: 1px solid var(--border); }
+.metric.metric-temp .m-label { color: var(--text); font-weight: 600; }
+.metric .m-val-temp { font-size: 24px; letter-spacing: .5px; }
+
+.chart-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.chart-head h3 { margin-bottom: 0; }
+.chart-range { display: flex; gap: 4px; }
+.btn.tiny { padding: 3px 9px; font-size: 11px; border-radius: 6px; }
+.chart-legend { display: flex; gap: 14px; font-size: 12px; margin-bottom: 6px; font-weight: 600; }
+.chart-legend .lg-gpu { color: #f0883e; }
+.chart-legend .lg-cpu { color: #58a6ff; }
+.temp-chart { width: 100%; height: auto; display: block; }
+.temp-chart .grid-line { stroke: #21262d; stroke-width: 1; }
+.temp-chart .axis-text { fill: var(--muted); font-size: 11px; }
+.temp-chart .limit-line { stroke-width: 1; stroke-dasharray: 5 5; opacity: .7; }
+.temp-chart .limit-line.gpu { stroke: #f0883e; }
+.temp-chart .limit-line.cpu { stroke: #58a6ff; }
+.temp-chart .series { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.temp-chart .series.gpu { stroke: #f0883e; }
+.temp-chart .series.cpu { stroke: #58a6ff; }
+.chart-foot { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; color: var(--muted); margin-top: 6px; flex-wrap: wrap; }

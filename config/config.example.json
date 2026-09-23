@@ -22,7 +22,14 @@
   },
   "monitor": {
     "intervalMs": 5000,
-    "historyRetentionHours": 48
+    "historyRetentionHours": 48,
+    "tempAlert": {
+      "enabled": true,
+      "gpuC": 80,
+      "cpuC": 90,
+      "hysteresisC": 3,
+      "repeatMs": 1800000
+    }
   },
   "recovery": {
     "intervalMs": 30000,
@@ -37,6 +44,10 @@
       120000
     ],
     "maxAttempts": 3
+  },
+  "lhm": {
+    "url": "http://127.0.0.1:8085/data.json",
+    "timeoutMs": 1500
   },
   "tasks": {
     "defaultWorkspace": "E:\\YOUR_WORKSPACE"

@@ -14,14 +14,23 @@ const defaults = {
     logFile: path.join(ROOT, 'dsh.log'),
     publicUrl: '',
     proxyHost: '',
-    proxyHosts: [],
-    serviceName: '',
     userProfile: '',
     startCommand: 'npx --yes @deepseek-ai/dsh web --no-open',
     startCwd: ROOT,
     healthTimeoutMs: 2000
   },
-  monitor: { intervalMs: 5000, historyRetentionHours: 48 },
+  monitor: {
+    intervalMs: 5000,
+    historyRetentionHours: 48,
+    tempAlert: {
+      enabled: true,
+      gpuC: 80,
+      cpuC: 90,
+      hysteresisC: 3,
+      repeatMs: 1800000
+    }
+  },
+  lhm: { url: 'http://127.0.0.1:8085/data.json', timeoutMs: 1500 },
   recovery: {
     intervalMs: 30000,
     autoRestart: true,

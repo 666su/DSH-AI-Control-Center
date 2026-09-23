@@ -4,6 +4,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { db, nowIso } from '../database/db.js';
 import { config } from '../config.js';
+import { readCpuTemp } from './cpuTemp.js';
+import { checkTemperatureAlerts } from './tempAlert.js';
 
 const execFileP = promisify(execFile);
 let lastSnapshot = null;
@@ -31,10 +33,11 @@ async function queryGpu() {
 
 /** Take one full snapshot: cpu/gpu/mem/disk. */
 export async function snapshot() {
-  const [cpu, mem, fsSize] = await Promise.all([
+  const [cpu, mem, fsSize, cpuTemp] = await Promise.all([
     si.currentLoad().catch(() => null),
     si.mem().catch(() => null),
-    si.fsSize().catch(() => null)
+    si.fsSize().catch(() => null),
+    readCpuTemp().catch(() => null)   // LibreHardwareMonitor；不可用时为 null
   ]);
   const gpu = await queryGpu();
 
@@ -56,7 +59,9 @@ export async function snapshot() {
     ts: nowIso(),
     cpu: {
       load: cpu ? Math.round(cpu.currentLoad * 10) / 10 : null,
-      cores: cpu && cpu.cpus ? cpu.cpus.length : null
+      cores: cpu && cpu.cpus ? cpu.cpus.length : null,
+      tempC: cpuTemp ? cpuTemp.value : null,
+      tempLabel: cpuTemp ? cpuTemp.name : null
     },
     gpu,
     mem: mem ? {
@@ -66,7 +71,17 @@ export async function snapshot() {
     } : null,
     disk,
     diskFreeGb: disk ? +(disk.free / 1024 ** 3).toFixed(2) : null,
-    diskTotalGb: disk ? +(disk.size / 1024 ** 3).toFixed(2) : null
+    diskTotalGb: disk ? +(disk.size / 1024 ** 3).toFixed(2) : null,
+    // 温度汇总：前端卡片与告警统一从这里取
+    temps: {
+      gpuC: gpu && Number.isFinite(gpu.tempC) ? gpu.tempC : null,
+      cpuC: cpuTemp ? cpuTemp.value : null,
+      cpuLabel: cpuTemp ? cpuTemp.name : null,
+      thresholds: {
+        gpuC: config.monitor?.tempAlert?.gpuC ?? 80,
+        cpuC: config.monitor?.tempAlert?.cpuC ?? 90
+      }
+    }
   };
   return lastSnapshot;
 }
@@ -74,14 +89,16 @@ export async function snapshot() {
 /** Persist snapshot to history table. */
 export function persistSnapshot(snap) {
   const stmt = db.prepare(`INSERT INTO system_stats
-    (ts, cpu, gpu_util, gpu_mem_used, gpu_mem_total, mem_used, mem_total, disk_free, disk_total)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    (ts, cpu, gpu_util, gpu_mem_used, gpu_mem_total, gpu_temp, cpu_temp, mem_used, mem_total, disk_free, disk_total)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   stmt.run(
     snap.ts,
     snap.cpu?.load ?? null,
     snap.gpu?.util ?? null,
     snap.gpu ? Math.round(snap.gpu.memUsedMb) : null,
     snap.gpu ? Math.round(snap.gpu.memTotalMb) : null,
+    snap.temps?.gpuC ?? null,
+    snap.temps?.cpuC ?? null,
     snap.mem ? Math.round(snap.mem.usedGb * 1024) : null,
     snap.mem ? Math.round(snap.mem.totalGb * 1024) : null,
     snap.disk ? Math.round(snap.disk.free / 1024 ** 2) : null,   // MB
@@ -101,7 +118,7 @@ export function getLastSnapshot() {
 
 export function getHistory(hours = 6, limit = 2000) {
   const cutoff = new Date(Date.now() - hours * 3600 * 1000).toISOString();
-  return db.prepare(`SELECT ts, cpu, gpu_util, gpu_mem_used, mem_used, mem_total, disk_free, disk_total
+  return db.prepare(`SELECT ts, cpu, gpu_util, gpu_mem_used, mem_used, mem_total, disk_free, disk_total, gpu_temp, cpu_temp
     FROM system_stats WHERE ts >= ? ORDER BY id ASC LIMIT ?`).all(cutoff, limit);
 }
 
@@ -112,6 +129,7 @@ export function startMonitor() {
       const snap = await snapshot();
       persistSnapshot(snap);
       pruneHistory();
+      checkTemperatureAlerts(snap);
     } catch (e) {
       console.error('[monitor] snapshot error:', e.message);
     }

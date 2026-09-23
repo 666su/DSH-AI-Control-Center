@@ -89,6 +89,16 @@ function formatParts(event, data) {
       title = '⛔ DSH 自动恢复已熔断';
       body = data.message || 'DSH 连续多次恢复失败，请人工介入';
       break;
+    case 'temp.high':
+      title = '🔥 温度过高告警';
+      body = (data.label || '设备') + ' 当前 ' + data.value + '°C，已超过阈值 ' + data.threshold + '°C';
+      if (data.phase === 'still high') body += '\n（持续高温提醒）';
+      else body += '\n请检查散热/负载情况';
+      break;
+    case 'temp.recovered':
+      title = '✅ 温度已恢复正常';
+      body = (data.label || '设备') + ' 已降至 ' + data.value + '°C，低于阈值 ' + data.threshold + '°C';
+      break;
     case 'test':
       title = '🧪 测试推送';
       body = '这是一条来自 DSH 控制中心的测试通知';

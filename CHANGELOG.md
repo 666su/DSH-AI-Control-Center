@@ -4,6 +4,56 @@
 
 ---
 
+## v1.3.0 — 2026-09-23
+
+### 🆕 新功能
+
+#### GPU / CPU 独立温度指标卡
+- GPU 温度从「显存 VRAM」卡副标题中拆出，成为独立指标卡；新增 **CPU 温度** 卡（未接入时提示「需启动 LibreHardwareMonitor」）
+- 温度卡按阈值分级着色：<阈值-10 绿、阈值-10~阈值 黄、≥阈值 红，一眼识别高温
+- 显存卡不再兼任温度显示，只保留「已用 / 总量」
+
+#### 温度历史入库与趋势曲线
+- `system_stats` 表新增 `gpu_temp` / `cpu_temp` 两列（热迁移，旧数据对应字段为 NULL）
+- `GET /api/system/history` 返回温度字段；前端新增 **零依赖内联 SVG 趋势图**（1h / 6h / 24h 切换），无需引入第三方图表库
+- 采用**分桶取最大值**降采样：温度是尖峰指标，取平均会抹掉真正的高温瞬间，峰值保留才能定位问题
+
+#### 高温告警（可走已有通知通道）
+- 新增 `monitor.tempAlert` 配置：`enabled`、`gpuC`（默认 80）、`cpuC`（默认 90）、`hysteresisC`（默认 3）、`repeatMs`（默认 30 分钟）
+- 告警策略：首次超阈值推 1 次 → 持续高温每 30 分钟最多提醒 1 次 → 降到「阈值 - 迟滞」以下再推 1 次恢复通知；3°C 迟滞防止阈值附近反复抖动刷屏
+- 接入已有通知通道（Telegram / Server酱 / Webhook），事件 `temp.high` / `temp.recovered`
+- 内存状态机：控制中心重启后重新武装，不补推历史告警
+
+#### LibreHardwareMonitor 一键启用脚本
+- 新增 `scripts/enable-temp-monitor.bat`（双击即可）：
+  - 自动提权（非管理员时弹 UAC 重启自己，无需右键）
+  - 配置 LHM 开启本地 Web Server（仅 `127.0.0.1:8085`，不暴露到网络）
+  - 补 hosts 本机名条目（LHM 校验绑定 IP 是否属于本机，否则退化成监听全部网卡）
+  - 注册开机自启计划任务（AtLogOn + 最高权限）并立即启动
+  - 重启 `DSHControlCenter` 服务使新代码生效
+  - 端到端自检并打印 LHM / 后端 / GPU 温度 / CPU 温度
+
+### 🐛 Bug 修复
+
+#### CPU 温度始终为 null
+- **根因**：`cpuTemp.js` 依赖 LHM 的 `HardwareId` 判断「是否属于 CPU 硬件」，但实际输出的传感器节点 `HardwareId` 为空，导致全部 50 个温度传感器被跳过
+- **修复**：改为按传感器名称启发式识别（`Core Max`、`Core Average`、`CPU Package`、`P-Core #N`、`E-Core #N` 为 CPU；排除 `GPU Core`、`DIMM #0`、`Temperature #1` 等非 CPU 传感器），`HardwareId` 保留作为兜底
+
+#### 启用脚本双击闪退、零输出
+- **根因**：`enable-temp-monitor.bat` 用 LF 换行，Windows `cmd.exe` 解析含括号块和 `^` 续行的批处理**必须 CRLF**，导致解析阶段直接失败
+- **修复**：bat 精简为 3 行引导，全部逻辑移到 `enable-temp-monitor.ps1`（CRLF）；计划任务改用 PowerShell `Register-ScheduledTask`（比 `schtasks.exe` 可靠）；每步 `try/catch` 加状态输出，失败不中断
+
+### 🔒 安全清理
+- 移除 `enable-temp-monitor.ps1` 里硬编码的计算机名（`yangyang`），改用 `$env:COMPUTERNAME` 运行时获取，既通用也不泄露机器名
+- 脚本里 `userId` 从运行时 `$env:USERDOMAIN\\$env:USERNAME` 获取，不留硬编码账户名
+
+### 📝 配置变更
+- `backend/config.js` / `config/config.example.json` 新增：`monitor.tempAlert`（告警阈值/迟滞/节流）、`lhm`（接口地址与超时）
+- 升级建议：若使用 LHM 采集 CPU 温度，确保 `scripts/enable-temp-monitor.bat` 已运行（需管理员权限）
+
+---
+
+
 ## v1.2.0 — 2026-09-22
 
 ### 🐛 Bug 修复

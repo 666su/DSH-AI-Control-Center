@@ -54,6 +54,14 @@ export function DshPanel({ dsh, onRestart, onPause, onResume, onStart, onStop, b
   );
 }
 
+/** 温度分级：达到阈值=红，距阈值 10°C 以内=黄，其余=绿。 */
+export function tempClass(temp, threshold) {
+  if (temp == null || !Number.isFinite(temp)) return 'green';
+  if (temp >= threshold) return 'red';
+  if (temp >= threshold - 10) return 'yellow';
+  return 'green';
+}
+
 export function SystemCards({ sys }) {
   if (!sys) return <div className="card"><div className="empty">等待系统数据…</div></div>;
   const cpuPct = sys.cpu?.load ?? null;
@@ -61,14 +69,29 @@ export function SystemCards({ sys }) {
   const vramPct = sys.gpu && sys.gpu.memTotalMb ? Math.round(sys.gpu.memUsedMb / sys.gpu.memTotalMb * 100) : null;
   const ramPct = sys.mem?.usedPercent ?? null;
   const diskPct = sys.diskTotalGb ? Math.round(sys.diskFreeGb / sys.diskTotalGb * 100) : null;
+  // 温度（独立卡片）
+  const gpuTemp = sys.temps?.gpuC ?? sys.gpu?.tempC ?? null;
+  const cpuTemp = sys.temps?.cpuC ?? sys.cpu?.tempC ?? null;
+  const gpuLimit = sys.temps?.thresholds?.gpuC ?? 80;
+  const cpuLimit = sys.temps?.thresholds?.cpuC ?? 90;
   return (
     <div className="card">
       <h3>系统资源（5秒自动刷新）</h3>
       <div className="grid">
         <Metric label="CPU" value={(cpuPct ?? '—') + '%'} bar={cpuPct} barClass="green" sub={sys.cpu?.cores ? sys.cpu.cores + ' 核心' : ''} />
         <Metric label="GPU" value={(gpuPct ?? '—') + '%'} bar={gpuPct} barClass="purple" sub={sys.gpu ? sys.gpu.name : '无GPU'} />
+        <Metric label="GPU 温度" accent
+          value={gpuTemp != null ? gpuTemp.toFixed(1) + '°C' : '—'}
+          bar={gpuTemp} barClass={tempClass(gpuTemp, gpuLimit)}
+          sub={'告警阈值 ' + gpuLimit + '°C'} />
+        <Metric label="CPU 温度" accent
+          value={cpuTemp != null ? cpuTemp.toFixed(1) + '°C' : '未接入'}
+          bar={cpuTemp} barClass={tempClass(cpuTemp, cpuLimit)}
+          sub={cpuTemp != null
+            ? '告警阈值 ' + cpuLimit + '°C' + (sys.cpu?.tempLabel ? ' · ' + sys.cpu.tempLabel : '')
+            : '需启动 LibreHardwareMonitor'} />
         <Metric label="显存 VRAM" value={fmtGb(sys.gpu?.memUsedMb)} bar={vramPct} barClass="blue"
-          sub={sys.gpu ? fmtGb(sys.gpu.memTotalMb) + ' / ' + sys.gpu.tempC + '°C' : ''} />
+          sub={sys.gpu ? fmtGb(sys.gpu.memTotalMb) + ' 总量' : ''} />
         <Metric label="内存 RAM" value={fmtGbVal(sys.mem?.usedGb)} bar={ramPct} barClass="yellow"
           sub={sys.mem ? fmtGbVal(sys.mem.totalGb) + ' 总量' : ''} />
         <Metric label="磁盘剩余" value={sys.diskFreeGb + ' GB'} bar={diskPct} barClass="green"
@@ -78,12 +101,12 @@ export function SystemCards({ sys }) {
   );
 }
 
-function Metric({ label, value, bar, barClass, sub }) {
+function Metric({ label, value, bar, barClass, sub, accent }) {
   const pct = bar == null ? 0 : Math.min(100, Math.max(0, bar));
   return (
-    <div className="metric">
+    <div className={'metric' + (accent ? ' metric-temp' : '')}>
       <div className="m-label"><span>{label}</span></div>
-      <div className="m-val">{value}</div>
+      <div className={'m-val' + (accent ? ' m-val-temp' : '')}>{value}</div>
       <div className={'bar ' + (barClass || 'green')}><div style={{ width: pct + '%' }} /></div>
       {sub && <div className="m-sub">{sub}</div>}
     </div>

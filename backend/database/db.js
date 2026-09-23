@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS system_stats (
   gpu_util      REAL,
   gpu_mem_used  INTEGER,
   gpu_mem_total INTEGER,
+  gpu_temp      REAL,
+  cpu_temp      REAL,
   mem_used      INTEGER,
   mem_total     INTEGER,
   disk_free     INTEGER,
@@ -54,6 +56,11 @@ CREATE TABLE IF NOT EXISTS settings (
 // ---- migration: add model/provider columns to tasks ----
 for (const col of ['model', 'provider']) {
   try { db.exec('ALTER TABLE tasks ADD COLUMN ' + col + ' TEXT'); } catch { /* already exists */ }
+}
+
+// ---- migration: add temperature columns to system_stats ----
+for (const col of ['gpu_temp', 'cpu_temp']) {
+  try { db.exec('ALTER TABLE system_stats ADD COLUMN ' + col + ' REAL'); } catch { /* already exists */ }
 }
 
 // ---- helpers ----

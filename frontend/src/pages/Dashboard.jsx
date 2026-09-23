@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { DshPanel, SystemCards } from '../components/DashboardCards.jsx';
+import TempChart from '../components/TempChart.jsx';
 import { api } from '../api.js';
 
 export default function Dashboard({ globalStatus, notify, onJump }) {
@@ -42,6 +43,7 @@ export default function Dashboard({ globalStatus, notify, onJump }) {
         onOpenWeb={() => window.open(openUrlFor(dsh), '_blank')}
       />
       <SystemCards sys={sys} />
+      <TempChart thresholds={sys?.temps?.thresholds} onJump={onJump} />
 
       <div className="card">
         <h3>最近任务</h3>
