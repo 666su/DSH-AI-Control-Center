@@ -1,288 +1,289 @@
-# 🛰️ DSH AI Control Center — 个人 AI Agent 控制中心
+<p align="center">
+  <a href="./README.md"><img src="https://img.shields.io/badge/English-0052CC?style=for-the-badge" alt="English"></a>
+  <a href="./README.zh-CN.md"><img src="https://img.shields.io/badge/%E4%B8%AD%E6%96%87-495057?style=for-the-badge" alt="中文"></a>
+</p>
 
-一个运行在你自己电脑上的 **AI Agent 管理平台**：通过手机 / PC 网页实时查看 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）运行状态、系统资源（CPU / GPU / 显存 / 内存 / 磁盘）、任务执行情况与日志，并可直接给 DSH 发送新指令、暂停 / 继续 / 取消任务、一键重启 DSH——即使你人在外面。
+# 🛰️ DSH AI Control Center — Personal AI Agent Control Center
 
+A **self-hosted AI agent management platform** running on your own machine: monitor [DeepSeek Harness](https://github.com/deepseek-ai) (DSH) status, system resources (CPU / GPU / VRAM / memory / disk), task execution and logs in real time from your phone or PC browser — and send new commands, pause / resume / cancel tasks, and restart DSH with one click, even when you're away.
 
-| 项目 | 值 |
+| Component | Value |
 |---|---|
-| 后端 | Node.js + Express（端口 **3081**） |
-| 前端 | React + Vite（移动端 / PC 自适应，生产构建由后端直接托管） |
-| 数据库 | SQLite（Node 内置 `node:sqlite`，零原生依赖） |
-| 系统监控 | systeminformation + nvidia-smi（RTX GPU 支持） |
-| 指令通道 | `dsh --profile headless "<指令>"`（DSH 官方 CLI 一次性会话，输出完整回传） |
-| 守护进程 | `monitor.js` 每 30 秒巡检，DSH 掉线自动重启 |
-| 通知 | Telegram / Server酱(微信) / Webhook 三通道真实推送：任务完成/失败、会话异常自动通知手机 |
+| Backend | Node.js + Express (port **3081**) |
+| Frontend | React + Vite (responsive mobile / PC, production build served by the backend) |
+| Database | SQLite (Node built-in `node:sqlite`, zero native dependencies) |
+| System monitoring | systeminformation + nvidia-smi (RTX GPU support) |
+| Command channel | `dsh --profile headless "<command>"` (DSH official CLI one-shot session, full output returned) |
+| Recovery daemon | `monitor.js` checks every 30 seconds, auto-restarts DSH if it goes down |
+| Notifications | Telegram / Server酱 (WeChat) / Webhook channels: task completion/failure and session anomalies pushed to your phone |
 
-
-> 👤 **作者：Jason** ｜ 📝 Blog: https://blog.20240606.xyz/ ｜ 🐙 GitHub: https://github.com/666su
-> 本项目部署后，控制中心页面底部会显示作者署名（如需去除，见「品牌署名」一节）。
-
----
-
-## 一、功能总览
-
-1. **DSH 状态监控** — 运行 / 停止、启动时间、运行时长、PID、Web 端口、token 自动解析
-2. **任务管理** — 发送指令创建任务（`DSH-001` 格式 ID），查看当前 / 历史任务，暂停 / 继续 / 取消，结果保存
-3. **日志系统** — 实时日志（SSE 推送 + 轮询兜底）、DSH 日志自动采集入库（`logs` 表）、按来源 / 级别过滤
-4. **手机控制** — 响应式界面 + 控制按钮：[继续执行] [暂停任务] [发送指令] [重启DSH]
-5. **自动恢复** — `monitor.js` 每 30 秒检查 DSH 端口 + 进程，异常自动重启，记录 `logs/recovery.log`（企业级健康检测，见下文）
-6. **通知推送** — Telegram / Server酱(微信) / Webhook 三通道；任务完成/失败、DSH 会话异常自动推送到手机（设置页可配）
-7. **后台运行** — NSSM 服务化脚本（`scripts/install-service.bat`），开机自启、无 CMD 窗口
+> 👤 **Author: Jason** ｜ 📝 Blog: https://blog.20240606.xyz/ ｜ 🐙 GitHub: https://github.com/666su
+> After deployment, the control center page footer shows the author signature (see the "Branding" section to remove it).
 
 ---
 
-## 二、项目结构
+## 1. Feature Overview
 
-```
-DSH-AI-Control-Center/            （项目根目录）
+1. **DSH Status Monitoring** — running / stopped, start time, uptime, PID, web port, automatic token parsing
+2. **Task Management** — create tasks by sending commands (`DSH-001` style IDs), view current / historical tasks, pause / resume / cancel, save results
+3. **Log System** — real-time logs (SSE push + polling fallback), automatic DSH log collection into the `logs` table, filter by source / level
+4. **Mobile Control** — responsive UI with control buttons: [Continue] [Pause task] [Send command] [Restart DSH]
+5. **Auto Recovery** — `monitor.js` checks the DSH port + process every 30 seconds, auto-restarts on anomalies, records `logs/recovery.log` (enterprise-grade health checks, see below)
+6. **Notification Push** — Telegram / Server酱 (WeChat) / Webhook channels; task completion/failure and DSH session anomalies pushed to your phone (configurable in Settings)
+7. **Background Operation** — NSSM service scripts (`scripts/install-service.bat`), auto-start on boot, no CMD window
+
+---
+
+## 2. Project Structure
+
+``text
+DSH-AI-Control-Center/            (project root)
 ├── backend/
-│   ├── server.js                   Express 入口（API + 托管前端构建产物）
-│   ├── config.js                   配置加载（合并 config/config.json）
-│   ├── api/                        路由：status / system / dsh / tasks / logs / monitor / notify / health
+│   ├── server.js                   Express entry (API + serves the frontend build)
+│   ├── config.js                   Config loading (merges config/config.json)
+│   ├── api/                        Routes: status / system / dsh / tasks / logs / monitor / notify / health
 │   ├── services/
-│   │   ├── dshService.js           DSH 进程检测、token 解析、启动 / 停止 / 重启、暂停 / 恢复
-│   │   ├── taskRunner.js           headless 任务执行器（创建 / 状态 / 日志 / 控制）
-│   │   ├── processControl.js       Windows 进程挂起 / 恢复（NtSuspendProcess）
-│   │   ├── systemMonitor.js        CPU / GPU / 显存 / 内存 / 磁盘采样 + 历史落库
-│   │   └── notifyService.js        通知 stub（log 优先）
+│   │   ├── dshService.js           DSH process detection, token parsing, start / stop / restart, pause / resume
+│   │   ├── taskRunner.js           headless task executor (create / status / logs / control)
+│   │   ├── processControl.js       Windows process suspend / resume (NtSuspendProcess)
+│   │   ├── systemMonitor.js        CPU / GPU / VRAM / memory / disk sampling + history persistence
+│   │   └── notifyService.js        Notification stub (log-first)
 │   ├── monitor/
-│   │   ├── hub.js                  SSE 实时推送中心
-│   │   └── logTailer.js            dsh.log 尾部采集 → logs 表
-│   └── database/db.js              SQLite（node:sqlite）表结构 + 工具
+│   │   ├── hub.js                  SSE real-time push hub
+│   │   └── logTailer.js            dsh.log tail collection → logs table
+│   └── database/db.js              SQLite (node:sqlite) schema + utilities
 ├── frontend/
-│   ├── src/                        React 源码（App / api / styles / pages / components）
+│   ├── src/                        React source (App / api / styles / pages / components)
 │   ├── vite.config.js
 │   └── package.json
-├── monitor.js                      恢复守护进程（企业级健康检测 v2）
+├── monitor.js                      Recovery daemon (enterprise health check v2)
 ├── config/
-│   └── config.example.json         配置模板（复制为 config.json 并填写）
-├── scripts/                        启动 / NSSM 安装 / Cloudflare 辅助脚本
-└── README.md
-```
+│   └── config.example.json         Config template (copy to config.json and fill in)
+├── scripts/                        Start / NSSM install / Cloudflare helper scripts
+├── README.md                       English README (default)
+└── README.zh-CN.md                 Chinese README
+``
 
 ---
 
-## 三、快速开始
+## 3. Quick Start
 
-### 前置条件
-- Node.js ≥ 22.5（在 Node v24 上验证）
-- DeepSeek Harness：`npx --yes @deepseek-ai/dsh web --no-open`（可先在另一个窗口启动）
+### Prerequisites
+- Node.js ≥ 22.5 (verified on Node v24)
+- DeepSeek Harness: `npx --yes @deepseek-ai/dsh web --no-open` (can be started in another window first)
 
-### 1) 安装依赖（仅首次）
-```bash
-cd "你的项目目录"
+### 1) Install dependencies (first time only)
+``bash
+cd "your-project-directory"
 cd backend  && npm install
 cd ../frontend && npm install
-cd ../frontend && npm run build     # 生成生产前端产物（后端直接托管）
-```
+cd ../frontend && npm run build     # build production frontend (served by the backend)
+``
 
-### 2) 配置
-把 `config/config.example.json` 复制为 `config/config.json`，按需填写（详见「配置说明」）。
+### 2) Configure
+Copy `config/config.example.json` to `config/config.json` and fill in as needed (see "Configuration Reference").
 
-### 3) 启动
-```bash
+### 3) Start
+``bash
 cd backend
-npm start        # 或 node server.js
-```
-- 控制中心: http://127.0.0.1:3081
-- 首次启动会自动生成访问令牌并写入 `config/access-token.txt`；所有 `/api` 请求需带请求头 `X-Access-Token`（网页端在令牌页输入一次即可）。
+npm start        # or node server.js
+``
+- Control center: http://127.0.0.1:3081
+- On first start, an access token is auto-generated and written to `config/access-token.txt`; all `/api` requests need the `X-Access-Token` header (enter it once on the token page in the web UI).
 
-### 4) 启动恢复守护进程（可选但推荐）
-```bash
-node monitor.js          # 每 30 秒巡检，DSH 挂了自动拉起
-```
+### 4) Start the recovery daemon (optional but recommended)
+``bash
+node monitor.js          # checks every 30 seconds, auto-relaunches DSH if down
+``
 
 ---
 
-## 四、后台运行（开机自启，Windows 服务）
+## 4. Background Operation (auto-start on boot, Windows service)
 
-使用 **NSSM**（https://nssm.cc）把「后端」和「守护进程」注册为 Windows 服务。
+Use **NSSM** (https://nssm.cc) to register the "backend" and "daemon" as Windows services.
 
-1. 下载 nssm.exe，放到 `PATH` 或 `scripts/nssm.exe`（本仓库**不包含** nssm.exe 二进制）
-2. 以**管理员**身份运行：
-```bash
+1. Download nssm.exe and put it in `PATH` or at `scripts/nssm.exe` (the repository **does not include** the nssm.exe binary)
+2. Run as **Administrator**:
+``bash
 scripts\install-service.bat
-```
-3. 常用命令：
-```bash
-sc query DSHControlCenter        # 查看后端服务状态
-sc query DSHControlMonitor       # 查看守护服务状态
-nssm restart DSHControlCenter    # 重启服务
-scripts\uninstall-service.bat    # 卸载
-```
+``
+3. Common commands:
+``bash
+sc query DSHControlCenter        # check backend service status
+sc query DSHControlMonitor       # check daemon service status
+nssm restart DSHControlCenter    # restart service
+scripts\uninstall-service.bat    # uninstall
+``
 
-> 服务说明：
-> - `DSHControlCenter`：运行 `node backend/server.js`，日志写入 `logs/backend-service.log`（LocalSystem）
-> - `DSHControlMonitor`：运行 `node monitor.js`，日志写入 `logs/monitor-service.log`（LocalSystem）
-> - DSH 本体建议用你的 `start-dsh.bat` 或另外的 NSSM 服务启动，注意命令里带 `--no-open` 并把输出重定向到 `dsh.log`（见「token 捕获」）。
+> Service notes:
+> - `DSHControlCenter`: runs `node backend/server.js`, logs to `logs\backend-service.log` (LocalSystem)
+> - `DSHControlMonitor`: runs `node monitor.js`, logs to `logs\monitor-service.log` (LocalSystem)
+> - It's recommended to start DSH itself with your `start-dsh.bat` or another NSSM service; include `--no-open` and redirect output to `dsh.log` (see "Token Capture").
 >
-> **DSH 服务化启停**：若 DSH 也用 NSSM 注册为 Windows 服务（如 `DeepSeekHarness`），在 `config.json` 的 `dsh` 段填 `"serviceName": "DeepSeekHarness"`，控制中心的启动 / 停止 / 重启按钮将自动改用 `net start` / `net stop`（而非 npx spawn）。`monitor.js` 恢复守护也会优先用 `net start` 拉起。留空则保持 npx 直接启动方式。
+> **DSH service-based start/stop**: if DSH is also registered as a Windows service via NSSM (e.g. `DeepSeekHarness`), set `"serviceName": "DeepSeekHarness"` in the `dsh` section of `config.json`, and the control center's start / stop / restart buttons will use `net start` / `net stop` instead of npx spawn. The `monitor.js` recovery daemon also prefers `net start`. Leave it empty to keep the npx direct-start method.
 
 ---
 
-## 五、手机访问
+## 5. Mobile Access
 
-### 方式 A：局域网（内网）
-控制中心后端默认监听 `0.0.0.0:3081`，手机与电脑同一 WiFi 时，访问 `http://电脑局域网IP:3081` 即可。
+### Method A: LAN (local network)
+The control center backend listens on `0.0.0.0:3081` by default; when the phone and PC are on the same WiFi, visit `http://PC-LAN-IP:3081`.
 
-### 方式 B：Cloudflare Tunnel（公网，推荐，无需公网 IP）
-1. 在 Cloudflare Zero Trust 创建一个命名隧道，得到 tunnel token；
-2. 编辑 `scripts/install-cloudflared.bat`，把 `YOUR_TUNNEL_TOKEN` 换成你的 token；
-3. 运行脚本安装 `Cloudflared` 服务；
-4. 在隧道里加一条 Public Hostname：子域名 `dsh` → `HTTP 127.0.0.1:3081`；
-5. 浏览器访问 `https://dsh.YOUR_DOMAIN` 即可（控制中心会要求输入访问令牌）。
+### Method B: Cloudflare Tunnel (public, recommended, no public IP needed)
+1. Create a named tunnel in Cloudflare Zero Trust and get the tunnel token;
+2. Edit `scripts\install-cloudflared.bat` and replace `YOUR_TUNNEL_TOKEN` with your token;
+3. Run the script to install the `Cloudflared` service;
+4. Add a Public Hostname in the tunnel: subdomain `dsh` → `HTTP 127.0.0.1:3081`;
+5. Visit `https://dsh.YOUR_DOMAIN` in a browser (the control center will ask for the access token).
 
-### 方式 C：DSH 原生 Web（3080）公网访问（受控制中心密码保护，推荐）
-DSH 原生 Web 拥有全部操作能力（会话、工作区、智能体），**绝不能直接暴露到公网**（否则知道地址即可控制你的电脑）。正确做法是让 `dshui` 子域名先打到控制中心的**受保护代理**：
+### Method C: DSH native web (3080) public access (protected by the control center password, recommended)
+DSH native web has full control capabilities (sessions, workspaces, agents) and **must never be exposed directly to the public** (otherwise anyone with the URL can control your computer). The correct approach: point the `dshui` subdomain to the control center's **protected proxy**:
 
-1. 在 Cloudflare 隧道里把子域名 `dshui` 指向 `HTTP 127.0.0.1:3081`（控制中心，**不是** 3080）；
-2. 在 `config/config.json` 里配置：
-   `dsh.proxyHosts` = [`dshui.YOUR_DOMAIN`]　(让该域名走代理)；
-   `server.cookieDomain` = `.YOUR_DOMAIN`　(子域名共享登录 cookie)；
-   `server.publicUrl` = `https://dsh.YOUR_DOMAIN`　(未登录时跳转控制中心登录页)；
-3. 之后任何人访问 `https://dshui.YOUR_DOMAIN`，**必须先登录控制中心**（输入访问密钥），否则一律 302 跳转到登录页；DSH 本体保持只监听 127.0.0.1（无需 `--trusted-host` 公网域名）。
+1. In the Cloudflare tunnel, point subdomain `dshui` to `HTTP 127.0.0.1:3081` (control center, **not** 3080);
+2. Configure in `config/config.json`:
+   `dsh.proxyHosts` = [`dshui.YOUR_DOMAIN`]　(make this domain go through the proxy);
+   `server.cookieDomain` = `.YOUR_DOMAIN`　(subdomains share the login cookie);
+   `server.publicUrl` = `https://dsh.YOUR_DOMAIN`　(redirect to the control center login page when not logged in);
+3. After this, anyone visiting `https://dshui.YOUR_DOMAIN` **must log into the control center first** (enter the access key), otherwise they get a 302 redirect to the login page; DSH itself keeps listening only on 127.0.0.1 (no `--trusted-host` public domain needed).
 
-> 原理：控制中心收到 `dshui` 域名的请求后，校验控制中心登录 cookie（`cc_auth`），通过后以服务端 mint 的 DSH 认证 cookie 转发到 `127.0.0.1:3080`（Host 改写为 127.0.0.1 通过 DSH 浏览器信任墙）。DSH /api 只接受来自 127.0.0.1 的 Host，公网无法绕过控制中心直连。
+> How it works: when the control center receives a request for the `dshui` domain, it validates the control center login cookie (`cc_auth`), then forwards to `127.0.0.1:3080` with a server-minted DSH auth cookie (Host rewritten to 127.0.0.1 to pass DSH's browser trust fence). DSH /api only accepts a Host of 127.0.0.1, so the public can't bypass the control center to connect directly.
 
 ---
 
-## 六、控制中心 API 速览
+## 6. Control Center API Overview
 
-所有 `/api` 请求需带 `X-Access-Token`（`/api/health` 除外）。
+All `/api` requests need the `X-Access-Token` header (`/api/health` excluded).
 
-| 方法 | 路径 | 说明 |
+| Method | Path | Description |
 |---|---|---|
-| GET | /api/health | 健康检查（免鉴权） |
-| GET | /api/status | DSH + 系统综合状态 |
-| GET | /api/dsh/status | DSH 详细状态（含 token、publicUrl） |
-| POST | /api/dsh/start | 启动 DSH |
-| POST | /api/dsh/stop | 停止 DSH |
-| POST | /api/dsh/restart | 重启 DSH |
-| POST | /api/dsh/control | 暂停 / 继续（pause / resume） |
-| GET | /api/system/last | 最新系统指标 |
-| GET | /api/system/history | 历史指标 |
-| GET/POST | /api/tasks | 任务列表 / 创建任务 |
-| POST | /api/tasks/:id/control | 暂停 / 继续 / 取消任务 |
-| GET | /api/logs | 日志查询 |
-| GET | /api/monitor/status | 恢复守护实时状态 |
+| GET | /api/health | Health check (no auth) |
+| GET | /api/status | Combined DSH + system status |
+| GET | /api/dsh/status | Detailed DSH status (includes token, publicUrl) |
+| POST | /api/dsh/start | Start DSH |
+| POST | /api/dsh/stop | Stop DSH |
+| POST | /api/dsh/restart | Restart DSH |
+| POST | /api/dsh/control | Pause / resume (pause / resume) |
+| GET | /api/system/last | Latest system metrics |
+| GET | /api/system/history | Historical metrics |
+| GET/POST | /api/tasks | List tasks / create task |
+| POST | /api/tasks/:id/control | Pause / resume / cancel task |
+| GET | /api/logs | Query logs |
+| GET | /api/monitor/status | Recovery daemon real-time status |
 
 ---
 
-## 七、配置说明（config/config.json）
+## 7. Configuration Reference (config/config.json)
 
-⚠️ **部署前请务必把以下带 `YOUR_` 的占位符改成你自己的值。**
+⚠️ **Before deployment, replace all `YOUR_` placeholders with your own values.**
 
-| 配置项 | 默认 / 占位 | 说明 |
+| Key | Default / placeholder | Description |
 |---|---|---|
-| `server.port` | `3081` | 控制中心端口 |
-| `server.host` | `0.0.0.0` | 监听地址（0.0.0.0 允许局域网访问） |
-| `server.token` | 空 | 留空则自动生成并写入 access-token.txt |
-| `dsh.port` | `3080` | DSH Web 端口 |
-| `dsh.logFile` | `E:\YOUR_WORKSPACE\dsh.log` | ⚠️ DSH 日志文件绝对路径（token 解析依赖它） |
-| `dsh.startCommand` | `npx --yes @deepseek-ai/dsh web --no-open` | ⚠️ 重启 / 守护拉起 DSH 的命令；公网暴露 DSH 时追加 `--trusted-host 你的域名` |
-| `dsh.startCwd` | `E:\YOUR_WORKSPACE` | ⚠️ 启动 DSH 的工作目录 |
-| `dsh.publicUrl` | 空 | 可选：DSH Web 的公网地址（手机直接开 DSH 用） |
-| `dsh.userProfile` | `C:\Users\YOUR_USERNAME` | ⚠️ 你的 Windows 用户名目录（LocalSystem 拉起 DSH + 读取 DSH 凭证文件 `.dsh/.credentials.yaml` 提取 API Key 注入 headless 进程） |
-| `tasks.defaultWorkspace` | `E:\YOUR_WORKSPACE` | ⚠️ 任务默认工作目录 |
-| `server.cookieDomain` | 空 | ⚠️ 启用 DSH 代理时填 `.YOUR_DOMAIN`，让 dshui 子域名共享控制中心登录 cookie |
-| `server.publicUrl` | 空 | ⚠️ 控制中心自身公网地址（未登录跳转用它，如 `https://dsh.YOUR_DOMAIN`） |
-| `dsh.proxyHosts` | [] | ⚠️ 数组，填 DSH Web 公网子域名（如 [\"dshui.YOUR_DOMAIN\"]）即启用受保护代理；支持多个域名 |
-| `dsh.serviceName` | 空 | 可选：NSSM 服务名（如 `DeepSeekHarness`）。填写后启停/恢复走 net start/stop，留空走 npx 直接启动 |
-| `recovery.*` | 见模板 | 恢复策略（连续失败阈值 3、冷却 30/60/120s、熔断上限 3） |
+| `server.port` | `3081` | Control center port |
+| `server.host` | `0.0.0.0` | Listen address (0.0.0.0 allows LAN access) |
+| `server.token` | empty | Leave empty to auto-generate and write to access-token.txt |
+| `dsh.port` | `3080` | DSH web port |
+| `dsh.logFile` | `E:\YOUR_WORKSPACE\dsh.log` | ⚠️ DSH log file absolute path (token parsing depends on it) |
+| `dsh.startCommand` | `npx --yes @deepseek-ai/dsh web --no-open` | ⚠️ Command used to restart / daemon-relaunch DSH; append `--trusted-host your-domain` when exposing DSH publicly |
+| `dsh.startCwd` | `E:\YOUR_WORKSPACE` | ⚠️ Working directory for starting DSH |
+| `dsh.publicUrl` | empty | Optional: public URL of the DSH web (for opening DSH directly on mobile) |
+| `dsh.userProfile` | `C:\Users\YOUR_USERNAME` | ⚠️ Your Windows user directory (used to launch DSH as LocalSystem + read the DSH credentials file `.dsh/.credentials.yaml` to inject API keys into headless processes) |
+| `tasks.defaultWorkspace` | `E:\YOUR_WORKSPACE` | ⚠️ Default working directory for tasks |
+| `server.cookieDomain` | empty | ⚠️ Set to `.YOUR_DOMAIN` when enabling the DSH proxy so the dshui subdomain shares the control center login cookie |
+| `server.publicUrl` | empty | ⚠️ Public URL of the control center itself (used for login redirects, e.g. `https://dsh.YOUR_DOMAIN`) |
+| `dsh.proxyHosts` | [] | ⚠️ Array of public subdomains for the DSH web (e.g. [`"dshui.YOUR_DOMAIN"`]) to enable the protected proxy; supports multiple domains |
+| `dsh.serviceName` | empty | Optional: NSSM service name (e.g. `DeepSeekHarness`). When set, start/stop/recovery use net start/stop; leave empty for npx direct start |
+| `recovery.*` | see template | Recovery policy (consecutive failure threshold 3, cooldowns 30/60/120s, circuit-breaker limit 3) |
 
 ---
 
-## 八、数据与日志
+## 8. Data and Logs
 
-| 路径 | 说明 |
+| Path | Description |
 |---|---|
-| `logs/recovery.log` | 恢复守护结构化事件日志 |
-| `logs/monitor-state.json` | 守护实时状态快照（/api/monitor/status 读取） |
-| `logs/notify.log` | 熔断告警 |
-| `backend/data/control-center.db` | SQLite 数据库（tasks / logs / system_stats / settings） |
+| `logs\recovery.log` | Structured event log of the recovery daemon |
+| `logs\monitor-state.json` | Real-time daemon state snapshot (read by /api/monitor/status) |
+| `logs\notify.log` | Circuit-breaker alerts |
+| `backend\data\control-center.db` | SQLite database (tasks / logs / system_stats / settings) |
 
 ---
 
-## 九、自动恢复守护（v2 — 企业级健康检测）
+## 9. Auto-Recovery Daemon (v2 — enterprise health check)
 
-### monitor.js 状态机
-```
-OK ──(连续失败<3次)──→ DEGRADED（仅观察，不动作）
-STARTING：进程存在但端口未就绪 = 启动中，绝不干预（宽限 90s）
-ABNORMAL：连续失败 ≥3 次，才允许恢复
-RECOVERING：指数冷却 30s/60s/120s 后再次尝试（上限 3 次）
-HALTED：连续 3 次恢复失败 → 熔断，停止自动恢复 + CRITICAL 告警
-```
+### monitor.js state machine
+``text
+OK ──(consecutive failures <3)──→ DEGRADED (observe only, no action)
+STARTING: process exists but port not ready = booting, never intervene (90s grace)
+ABNORMAL: consecutive failures ≥3, recovery is allowed
+RECOVERING: exponential cooldown 30s/60s/120s, then retry (max 3 attempts)
+HALTED: 3 consecutive recovery failures → circuit breaker, stop auto-recovery + CRITICAL alert
+``
 
-### 健康检测（四项探测）
-| 探测 | 说明 | 失败判定 |
+### Health checks (four probes)
+| Probe | Description | Failure condition |
 |---|---|---|
-| 进程 | node 进程匹配 dsh+web | 无进程 |
-| 端口 | TCP 127.0.0.1:3080 | 连接失败 |
-| HTTP | GET / 响应码 <500 | 超时/>=500 |
-| 启动状态 | 进程存在但端口未就绪 | = STARTING（不处理） |
+| Process | node process matching dsh+web | no process |
+| Port | TCP 127.0.0.1:3080 | connection failed |
+| HTTP | GET / response code <500 | timeout/>=500 |
+| Boot state | process exists but port not ready | = STARTING (no action) |
 
-### 恢复策略（防暴力重启）
-- 一次失败**不重启**：连续 3 次失败才判定 ABNORMAL
-- 启动宽限 90s + 进程年轻(<30s)保护：**绝不 kill 刚拉起的进程**
-- 指数冷却 30/60/120s + 熔断上限 3 次（HALTED 后等人工介入，DSH 恢复健康自动重新武装）
+### Recovery strategy (prevents brute-force restarts)
+- One failure does **not** restart: only 3 consecutive failures mark ABNORMAL
+- 90s boot grace + young process (<30s) protection: **never kill a process that was just launched**
+- Exponential cooldown 30/60/120s + circuit-breaker limit 3 (after HALTED, wait for manual intervention; DSH auto-rearms once healthy again)
 
 ---
 
-## 十、DSH token 捕获（重要）
+## 10. DSH Token Capture (important)
 
-DSH Web 的访问 token **每次启动随机生成、只打印到启动输出**，不落盘、无固定参数。控制中心靠解析 `dsh.log` 里的这一行拿到 token：
-```
+The DSH web access token is **randomly generated at every startup and only printed to startup output** — not persisted, no fixed parameters. The control center obtains the token by parsing this line from `dsh.log`:
+``text
 dsh web: http://127.0.0.1:3080/?token=xxxx
-```
+``
 
-> ⚠️ 经验教训：**不要用 Node `spawn` 的 stdio 流方式捕获子进程输出**（Windows 服务 LocalSystem 环境下会丢 token / 竞态报 `'stdio' is invalid`）。
-> 正确做法是 **cmd 自身的文件重定向**（与 start-dsh.bat 一致）：
-```js
+> ⚠️ Lesson learned: **don't capture child process output via Node `spawn` stdio streams** (under a Windows service LocalSystem environment the token can be lost / race with a `'stdio' is invalid` error).
+> The correct approach is **cmd's own file redirection** (same as start-dsh.bat):
+``js
 const redirectCmd = startCommand + ' >> "' + logFile + '" 2>&1';
 spawn('cmd.exe', ['/d', '/c', redirectCmd], { detached: true, stdio: 'ignore', env: buildSpawnEnv() });
-```
+``
 
-**buildSpawnEnv()** 会注入用户环境（USERPROFILE / HOMEDRIVE / HOMEPATH / HOME / npm_config_cache / LOCALAPPDATA / APPDATA），来源是 `dsh.userProfile`。因为控制中心 / 监控服务跑在 LocalSystem，不注入的话 DSH 会去 systemprofile 找 .dsh（会话 / 历史「消失」）且 npx 缓存会重新下载。
-
----
-
-## 十一、品牌署名
-
-部署后的控制中心页面底部显示项目署名「© DSH AI Control Center · Open Source」。
-
-- **保留署名**：无需任何操作（感谢支持 🙏）
-- **去除 / 修改署名**：编辑 `frontend/src/App.jsx` 里的 `site-footer` 区块，然后 `npm run build` 重新构建前端
+**buildSpawnEnv()** injects the user environment (USERPROFILE / HOMEDRIVE / HOMEPATH / HOME / npm_config_cache / LOCALAPPDATA / APPDATA), sourced from `dsh.userProfile`. Since the control center / monitor service run as LocalSystem, without this injection DSH would look in systemprofile for .dsh (sessions / history "disappear") and re-download the npx cache.
 
 ---
 
-## 十二、许可证与作者
+## 11. Branding
+
+After deployment, the control center page footer shows the project credit 「© DSH AI Control Center · Open Source」.
+
+- **Keep the credit**: nothing to do (thanks for your support 🙏)
+- **Remove / modify**: edit the `site-footer` block in `frontend/src/App.jsx`, then `npm run build` to rebuild the frontend
+
+---
+
+## 12. License and Author
 
 - License: [MIT](./LICENSE)
-- 作者: **Jason**
+- Author: **Jason**
 - Blog: https://blog.20240606.xyz/
 - GitHub: https://github.com/666su
-- License: MIT
-- License: MIT
-
 
 ---
 
-## 附：部署前「需要自行更改」清单
+## Appendix: Pre-deployment "things to change" checklist
 
-1. ✅ `config/config.example.json` → 复制为 `config.json`，改 `dsh.logFile / startCwd / userProfile / defaultWorkspace`（所有 `YOUR_` 占位符）
-2. ✅ `dsh.startCommand`：若公网暴露 DSH Web，追加 `--trusted-host 你的子域名.你的域名`
-3. ✅ `scripts/install-cloudflared.bat`：替换 `YOUR_TUNNEL_TOKEN` 为你的 Cloudflare 隧道 token
-4. ✅ 下载 `nssm.exe` 放到 `scripts/`（本仓库不含二进制）
-5. ✅ （可选）`frontend/src/App.jsx` 页脚署名修改 / 去除
-6. ✅ `dsh.proxyHosts`：若通过 DSH 子域名访问 DSH Web，填 `["dsh.YOUR_DOMAIN"]`（受控制中心密码保护）
-7. ✅ `dsh.serviceName`：若 DSH 以 NSSM 服务运行，填 `"DeepSeekHarness"`（启停走 net start/stop）
+1. ✅ `config/config.example.json` → copy to `config.json`, change `dsh.logFile / startCwd / userProfile / defaultWorkspace` (all `YOUR_` placeholders)
+2. ✅ `dsh.startCommand`: if exposing DSH web publicly, append `--trusted-host your-subdomain.your-domain`
+3. ✅ `scripts\install-cloudflared.bat`: replace `YOUR_TUNNEL_TOKEN` with your Cloudflare tunnel token
+4. ✅ Download `nssm.exe` and put it in `scripts`/ (binary not included in this repo)
+5. ✅ (optional) modify / remove the footer credit in `frontend/src/App.jsx`
+6. ✅ `dsh.proxyHosts`: if accessing the DSH web via a DSH subdomain, set `["dsh.YOUR_DOMAIN"]` (protected by the control center password)
+7. ✅ `dsh.serviceName`: if DSH runs as an NSSM service, set `"DeepSeekHarness"` (start/stop via net start/stop)
 
+## Model Selection
 
-## 模型选择
+When sending commands, you can select any model supported by DSH (free/paid):
+- Not selected = use DSH's current default model
+- After selection, temporarily overrides `agent-default-model` via `--patch`, auto-cleaned after the task ends
+- Free models are marked 🆓, current default marked ←
+- Set `dsh.userProfile` to read the DSH model list
 
-发送指令时可选择任意 DSH 支持的模型（免费/付费）：
-- 不选 = 用 DSH 当前默认模型
-- 选择后通过 `--patch` 临时覆盖 `agent-default-model`，任务结束后自动清理
-- 免费模型标记 🆓，当前默认标记 ←
-- 需设置 `dsh.userProfile` 才能读取 DSH 模型列表
