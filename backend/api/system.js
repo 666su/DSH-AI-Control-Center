@@ -1,6 +1,7 @@
 
 import { Router } from 'express';
 import { snapshot, getLastSnapshot, getHistory } from '../services/systemMonitor.js';
+import { getTempAlertState } from '../services/tempAlert.js';
 
 const router = Router();
 
@@ -11,7 +12,9 @@ router.get('/', async (req, res) => {
 });
 
 router.get('/last', (req, res) => {
-  res.json(getLastSnapshot() || null);
+  const snap = getLastSnapshot() || null;
+  // 附带温度告警状态机（当前是否处于高温、窗口内还有几次采样就达标）
+  res.json(snap ? { ...snap, tempAlert: getTempAlertState() } : null);
 });
 
 router.get('/history', (req, res) => {

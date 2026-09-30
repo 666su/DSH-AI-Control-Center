@@ -28,7 +28,12 @@
       "gpuC": 80,
       "cpuC": 90,
       "hysteresisC": 3,
-      "repeatMs": 1800000
+      "repeatMs": 1800000,
+      "onHigh": true,
+      "onStillHigh": true,
+      "onRecovered": false,
+      "windowSeconds": 60,
+      "minSustained": 5
     }
   },
   "recovery": {
@@ -54,6 +59,17 @@
   },
   "notify": {
     "enabled": false,
-    "channels": []
+    "channels": [],
+    "sessionTurns": {
+      "enabled": true,
+      "sessionsRoot": "",
+      "intervalMs": 3000,
+      "backfillHours": 24,
+      "onCompleted": true,
+      "onFailed": true,
+      "onAborted": false,
+      "ignoreWorkspaces": [],
+      "maxPromptChars": 120
+    }
   }
 }

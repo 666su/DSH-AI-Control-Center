@@ -30,7 +30,9 @@ A **self-hosted AI agent management platform** running on your own machine: moni
 4. **Mobile Control** — responsive UI with control buttons: [Continue] [Pause task] [Send command] [Restart DSH]
 5. **Auto Recovery** — `monitor.js` checks the DSH port + process every 30 seconds, auto-restarts on anomalies, records `logs/recovery.log` (enterprise-grade health checks, see below)
 6. **Notification Push** — Telegram / Server酱 (WeChat) / Webhook channels; task completion/failure and DSH session anomalies pushed to your phone (configurable in Settings)
-7. **Background Operation** — NSSM service scripts (`scripts/install-service.bat`), auto-start on boot, no CMD window
+7. **Workspace Conversation Push** — watches DSH Web UI conversation logs; pushes one notification whenever a reply turn ends (completed / error / max-tokens / aborted), including a summary of the user's prompt. Single-shot commands created on the Tasks page are not duplicated here
+8. **CPU / GPU Temperature Monitoring** — dedicated temperature cards + history charts (1h / 6h / 24h); high-temperature alerts can use the notification channels. Alert detection uses a **rolling-window count** (default: ≥5 samples over threshold within a 60-second window) which tolerates the temperature oscillation of workload-driven CPUs and avoids notification spam
+9. **Background Operation** — NSSM service scripts (`scripts/install-service.bat`), auto-start on boot, no CMD window
 
 ---
 
@@ -169,6 +171,10 @@ All `/api` requests need the `X-Access-Token` header (`/api/health` excluded).
 | POST | /api/tasks/:id/control | Pause / resume / cancel task |
 | GET | /api/logs | Query logs |
 | GET | /api/monitor/status | Recovery daemon real-time status |
+| GET | /api/sessions/turns | Recent workspace conversation turns ended (`?limit=30&workspace=...`) |
+| GET | /api/sessions/watcher | Session watcher status (tracked files, pushed/skipped counters) |
+| POST | /api/sessions/restart | Restart the watcher with the latest config |
+| POST | /api/sessions/test | Send a simulated "turn ended" push to verify the channel |
 
 ---
 
@@ -193,6 +199,9 @@ All `/api` requests need the `X-Access-Token` header (`/api/health` excluded).
 | `dsh.proxyHosts` | [] | ⚠️ Array of public subdomains for the DSH web (e.g. [`"dshui.YOUR_DOMAIN"`]) to enable the protected proxy; supports multiple domains |
 | `dsh.serviceName` | empty | Optional: NSSM service name (e.g. `DeepSeekHarness`). When set, start/stop/recovery use net start/stop; leave empty for npx direct start |
 | `recovery.*` | see template | Recovery policy (consecutive failure threshold 3, cooldowns 30/60/120s, circuit-breaker limit 3) |
+| `monitor.tempAlert.*` | see template | Temperature push: `enabled` / `gpuC`(80) / `cpuC`(90) / `hysteresisC`(3) / `repeatMs`(30 min) / `onHigh` / `onStillHigh` / `onRecovered`(off by default) / `windowSeconds`(60) / `minSustained`(5). Detection uses a rolling window: a sample is judged "hot" only when ≥`minSustained` samples in the window are over threshold; recovery needs most samples below "threshold - hysteresis" |
+| `notify.sessionTurns.*` | see template | Workspace conversation push: `enabled` / `sessionsRoot`(empty = auto-detect `%USERPROFILE%\.dsh\sessions`) / `intervalMs`(3000) / `backfillHours`(24) / `onCompleted` / `onFailed` / `onAborted`(off by default) / `ignoreWorkspaces`(substring match) / `maxPromptChars`(120) |
+| `notify.*` | see template | Global notification toggle (`enabled`) and channel list (`channels`), plus Telegram / Server酱 / Webhook credentials |
 
 ---
 
@@ -203,7 +212,7 @@ All `/api` requests need the `X-Access-Token` header (`/api/health` excluded).
 | `logs\recovery.log` | Structured event log of the recovery daemon |
 | `logs\monitor-state.json` | Real-time daemon state snapshot (read by /api/monitor/status) |
 | `logs\notify.log` | Circuit-breaker alerts |
-| `backend\data\control-center.db` | SQLite database (tasks / logs / system_stats / settings) |
+| `backend\data\control-center.db` | SQLite database (tasks / logs / system_stats / settings / session_turns) |
 
 ---
 

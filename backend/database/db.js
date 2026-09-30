@@ -51,6 +51,20 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT
 );
+CREATE TABLE IF NOT EXISTS session_turns (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts             TEXT NOT NULL,
+  workspace      TEXT NOT NULL,
+  session_id     TEXT NOT NULL,
+  title          TEXT,
+  turn           INTEGER,
+  reason_kind    TEXT NOT NULL,
+  reason_detail  TEXT,
+  prompt         TEXT,
+  notified       INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_session_turns_ts ON session_turns(ts);
+CREATE INDEX IF NOT EXISTS idx_session_turns_ws ON session_turns(workspace);
 `);
 
 // ---- migration: add model/provider columns to tasks ----
@@ -87,6 +101,37 @@ export function getSetting(key, fallback = null) {
 
 export function setSetting(key, value) {
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, String(value));
+}
+
+/** 记录一次「工作区对话结束」（turn/end），并返回记录 id。 */
+export function addSessionTurn(rec) {
+  const stmt = db.prepare('INSERT INTO session_turns (ts, workspace, session_id, title, turn, reason_kind, reason_detail, prompt, notified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const info = stmt.run(
+    rec.ts || nowIso(),
+    String(rec.workspace || ''),
+    String(rec.session_id || ''),
+    rec.title || null,
+    rec.turn == null ? null : Number(rec.turn),
+    String(rec.reason_kind || ''),
+    rec.reason_detail || null,
+    rec.prompt || null,
+    rec.notified ? 1 : 0
+  );
+  return Number(info.lastInsertRowid);
+}
+
+export function listSessionTurns({ limit = 100, workspace } = {}) {
+  let sql = 'SELECT * FROM session_turns';
+  const params = [];
+  if (workspace) { sql += ' WHERE workspace = ?'; params.push(workspace); }
+  sql += ' ORDER BY id DESC LIMIT ?';
+  params.push(Math.min(Number(limit) || 100, 500));
+  return db.prepare(sql).all(...params);
+}
+
+/** 标记某条对话结束记录已推送。 */
+export function markSessionTurnNotified(id, notified = true) {
+  db.prepare('UPDATE session_turns SET notified = ? WHERE id = ?').run(notified ? 1 : 0, Number(id));
 }
 
 export function nextTaskId() {

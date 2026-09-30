@@ -6,6 +6,7 @@ import { db, nowIso } from '../database/db.js';
 import { config } from '../config.js';
 import { readCpuTemp } from './cpuTemp.js';
 import { checkTemperatureAlerts } from './tempAlert.js';
+import { getTempAlertConfig } from './notifyService.js';
 
 const execFileP = promisify(execFile);
 let lastSnapshot = null;
@@ -78,8 +79,8 @@ export async function snapshot() {
       cpuC: cpuTemp ? cpuTemp.value : null,
       cpuLabel: cpuTemp ? cpuTemp.name : null,
       thresholds: {
-        gpuC: config.monitor?.tempAlert?.gpuC ?? 80,
-        cpuC: config.monitor?.tempAlert?.cpuC ?? 90
+        gpuC: getTempAlertConfig().gpuC,
+        cpuC: getTempAlertConfig().cpuC
       }
     }
   };

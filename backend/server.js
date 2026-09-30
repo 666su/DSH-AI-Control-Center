@@ -10,6 +10,7 @@ import { db, addLog, getSetting, setSetting } from './database/db.js';
 import apiRouter from './api/index.js';
 import { startMonitor } from './services/systemMonitor.js';
 import { startLogTailer } from './monitor/logTailer.js';
+import { startSessionWatcher } from './monitor/sessionWatcher.js';
 import { broadcast } from './monitor/hub.js';
 import { getStatus } from './services/dshService.js';
 import { proxyDshTo, proxyDshWs } from './services/dshProxy.js';
@@ -129,6 +130,7 @@ app.use((err, req, res, next) => {
 // ---- background services ----
 startMonitor();
 startLogTailer();
+startSessionWatcher();   // 工作区对话（Web UI 会话）结束推送
 
 // poll DSH status change -> broadcast (status page also polls directly)
 let lastRunning = null;

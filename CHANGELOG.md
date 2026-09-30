@@ -4,6 +4,76 @@
 
 ---
 
+## v1.4.0 — 2026-09-30
+
+### 🆕 新功能
+
+#### 工作区对话推送（Web 界面会话结束通知我）
+- 监听 DSH Web 界面里每个工作区的会话日志（`<USERPROFILE>\.dsh\sessions\<工作区>\<session-id>\session.v*.jsonl.zstd`），
+  解析 `turn/end` 事件，每轮回复结束（`completed` / `error` / `max-tokens` / `aborted` / `blocked` / `interrupted`）推送一条
+- 通知内容含：工作区、对话标题、第几轮、结束原因（中文描述）、本轮用户指令摘要
+- 新增 SQLite 表 `session_turns`（带 `notified` 标记），设置页可回看最近 30 条记录、区分「已推送 / 未推送」
+- **两级去重**，保证不刷屏：
+  1. 任务页创建的 headless 任务会自己推 `task.completed` / `task.failed`，
+     `taskRunner` 用「任务窗口」登记，其会话的 `turn/end` 被识别为「任务自有」而跳过
+  2. 同一 `seq` 只处理一次（重启重扫、帧重放都幂等）
+- 三个独立开关：完成 / 失败 / 手动停止；`ignoreWorkspaces` 支持按路径包含匹配屏蔽噪音工作区
+- 启动时回填最近 N 小时的历史对话结束（默认 24h，只入库不补推，分片执行不阻塞事件循环）
+- 会话日志是「多个 zstd 帧顺序追加」，按帧边界增量解码（只解析帧头不解压块），
+  首次发现的文件只登记基线不回放历史，避免重启后一次性刷历史通知
+
+#### 温度推送设置页（防刷屏）
+- 设置页新增「温度推送」卡片：总开关 + 进入高温 / 持续高温重复提醒 / 降温恢复三个细分开关，
+  CPU / GPU 阈值、迟滞温度、判定窗口、重复提醒间隔全部可视化可调，改完即时保存
+- 附「**套推荐配置（防刷屏）**」一键按钮：关恢复推送 + 60 秒窗口内 5/12 次超阈值才告警
+- 卡片下方实时显示当前 CPU / GPU 温度、阈值、是否高温中，以及**窗口内采样进度条**
+  （已采集 N/窗口次数、其中 M 次超阈值、窗口温度区间），看得见判定过程
+- `onRecovered` **默认关闭**：CPU 温度随负载大幅振荡时，「已恢复正常」这类消息是主要噪音源，没有任何可行动信息
+
+#### 滚动窗口温度判定（替换「连续 N 次」）
+- 负载型 CPU 的温度是**振荡**的，「连续 N 次超阈值」既不灵敏（尖峰型发热永远凑不出连续）也回不到正常；
+  「连续 N 次低于阈值」同理。改用**窗口内计数占比**：
+  - 进入高温：最近 `windowSeconds` 秒窗口内，超阈值采样数 ≥ `minSustained`
+  - 降温恢复：窗口内低于「阈值 - 迟滞」的采样数 ≥ `窗口次数 - minSustained + 1`
+- 默认窗口 60 秒 / 采样 5 秒 → 12 个采样点，需 5 次超阈值（约 42%）才判高温
+- 判定参数变化时自动重置状态机（配置指纹），避免新旧口径混用
+- `GET /api/system/last` 附带温度状态机（每个传感器的 level / 窗口采样 / 超阈值计数 / 高低区间）
+
+### 🐛 Bug 修复
+
+#### 温度告警刷屏（同一温度反复穿越阈值）
+- **现象**：CPU 温度在阈值附近（如 88/91/87/92）反复抖动时，每次穿越都推一条，
+  13 分钟里收到 13 条告警
+- **根因**：单点即时判定 + 双向迟滞计数器，震荡波形下每次穿越都触发一次推/收对
+- **修复**：改为滚动窗口计数（见上）+ `onRecovered` 默认关闭 + 持续高温重复提醒按 `repeatMs` 节流；
+  同一段震荡数据从 13 条降到 1 条
+
+#### 配置子块新增键全部丢失
+- **现象**：给 `monitor.tempAlert` 增加 `onHigh` / `onStillHigh` / `onRecovered` 等新键后，
+  设置页读到的是 `false` 而不是默认 `true`，温度推送开关全部失效
+- **根因**：`config.js` 的 merge 只有一层深度，`config.json` 里写了 `monitor.tempAlert` 子块
+  就把整个子块替换掉，默认值里后加的新键全部丢失
+- **修复**：改为**递归 deep-merge**，用户配置里没写的键保留默认值
+
+### 🔒 安全清理
+- 示例配置与工作区路径全部改用占位符（`E:\YOUR_WORKSPACE`、`C:\Users\YOUR_USERNAME`），
+  前端「忽略工作区」输入框的提示文案也不带真实路径
+- 测试推送里的示例工作区改为通用占位名，不带本机路径
+- `config/access-token.txt` 与 `config/env-report.txt` 在 `config.example.json` 中保持示例值，
+  真实凭证只存 `backend\data\control-center.db`（settings 表，不进版本控制）
+
+### 📝 配置变更
+- `backend/config.js` / `config/config.example.json` 新增：
+  - `monitor.tempAlert.onHigh` / `onStillHigh` / `onRecovered`（三个推送开关）
+  - `monitor.tempAlert.windowSeconds`（60）/ `minSustained`（5）（滚动窗口判定）
+  - `notify.sessionTurns.*`（工作区对话推送全部配置）
+- 新增 API：`GET /api/sessions/turns`、`GET /api/sessions/watcher`、
+  `POST /api/sessions/restart`、`POST /api/sessions/test`
+- 新增表：`session_turns`（含 `idx_session_turns_ts` / `idx_session_turns_ws` 索引）
+- 升级无需手工操作：表结构与索引由 `db.js` 启动时自动创建
+
+---
+
 ## v1.3.0 — 2026-09-23
 
 ### 🆕 新功能

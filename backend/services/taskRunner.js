@@ -6,6 +6,7 @@ import { config, ROOT_DIR, TASK_LOG_DIR } from '../config.js';
 import { db, nowIso, nextTaskId, addLog } from '../database/db.js';
 import { suspend, resume, kill } from './processControl.js';
 import { sendNotification, classifyDshError } from './notifyService.js';
+import { registerTaskWindow, unregisterTaskWindow } from '../monitor/sessionWatcher.js';
 import { readDshCredentials } from './credentials.js';
 
 const execFileP = promisify(execFile);
@@ -115,6 +116,11 @@ function startProcess(rec) {
     }
   }
 
+  // 登记 headless 任务窗口：该任务会自己推 task.completed / task.failed，
+  // sessionWatcher 据此跳过它新建会话的 turn/end，避免重复推送。
+  const winSince = Date.now();
+  registerTaskWindow(rec.workspace, winSince);
+
   let child;
   const runOpts = {
     cwd: rec.workspace,
@@ -147,6 +153,7 @@ function startProcess(rec) {
 
   child.on('error', (err) => {
     setTaskStatus(rec.id, 'failed', { finished_at: nowIso(), result: 'spawn error: ' + err.message, exit_code: -1 });
+    unregisterTaskWindow(rec.workspace, winSince);
     logStream.end();
     cleanupPatch();
     tasks.delete(rec.id);
@@ -158,12 +165,14 @@ function startProcess(rec) {
     if (current && current.status === 'cancelled') {
       setTimeout(() => { try { logStream.end(); } catch {} }, 100);
       cleanupPatch();
+      unregisterTaskWindow(rec.workspace, winSince);
       tasks.delete(rec.id);
       return;
     }
     const finalStatus = code === 0 ? 'completed' : 'failed';
     const tail = buffer.join('').trim().slice(-4000);
     setTaskStatus(rec.id, finalStatus, { finished_at: nowIso(), result: tail || null, exit_code: code });
+    unregisterTaskWindow(rec.workspace, winSince);
     addLog(finalStatus === 'completed' ? 'info' : 'warn', 'task', 'task ' + rec.id + ' ' + finalStatus + ' (exit ' + code + ')');
     if (finalStatus === 'completed') {
       sendNotification('task.completed', { taskId: rec.id, name: rec.name, exitCode: code }).catch(() => {});

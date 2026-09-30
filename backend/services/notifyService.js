@@ -18,6 +18,23 @@ function writeNotify(event, data) {
   } catch { /* ignore */ }
 }
 
+/** 把 turn/end 的 reason 转成中文描述。 */
+export function describeTurnEnd(reasonKind, reasonDetail) {
+  switch (reasonKind) {
+    case 'completed': return '正常完成';
+    case 'max-tokens': return '输出超长被截断（max-tokens）';
+    case 'blocked': return '被策略 / 权限拦截';
+    case 'aborted':
+      if (reasonDetail === 'user') return '用户手动停止';
+      if (reasonDetail === 'parent') return '父级任务取消';
+      if (reasonDetail === 'disposed') return '会话被释放';
+      if (reasonDetail === 'hook') return '被钩子中止';
+      return '对话被中止' + (reasonDetail ? '（' + reasonDetail + '）' : '');
+    case 'error': return '执行出错' + (reasonDetail ? '：' + String(reasonDetail).slice(0, 300) : '');
+    default: return reasonKind ? ('结束原因：' + reasonKind) : '结束原因未知';
+  }
+}
+
 /** 把 DSH 输出/错误文本归类为常见失败原因。 */
 export function classifyDshError(text) {
   const low = text ? String(text).toLowerCase() : '';
@@ -37,6 +54,60 @@ export function classifyDshError(text) {
   return { kind: 'unknown', label: '执行错误' };
 }
 
+/** 读取「工作区对话推送」配置（settings 表覆盖 config.json 默认值）。 */
+export function getSessionTurnsConfig() {
+  const base = { ...config.notify.sessionTurns };
+  const stored = getSetting('notify.sessionTurns', null);
+  if (stored) {
+    try {
+      const u = JSON.parse(stored);
+      if (u && typeof u === 'object') return { ...base, ...u };
+    } catch { /* ignore broken json */ }
+  }
+  return base;
+}
+
+/** 读取「温度推送」配置（settings 表覆盖 config.json 默认值）。 */
+export function getTempAlertConfig() {
+  const base = { ...config.monitor.tempAlert };
+  const stored = getSetting('monitor.tempAlert', null);
+  if (stored) {
+    try {
+      const u = JSON.parse(stored);
+      if (u && typeof u === 'object') return normalizeTempAlert({ ...base, ...u });
+    } catch { /* ignore broken json */ }
+  }
+  return normalizeTempAlert(base);
+}
+
+/** 规整温度推送配置，避免前端传脏值。 */
+export function normalizeTempAlert(u) {
+  u.enabled = !!u.enabled;
+  u.onHigh = !!u.onHigh;
+  u.onStillHigh = !!u.onStillHigh;
+  u.onRecovered = !!u.onRecovered;
+  u.gpuC = Math.max(30, Math.min(110, Number(u.gpuC ?? 80)));
+  u.cpuC = Math.max(30, Math.min(110, Number(u.cpuC ?? 90)));
+  u.hysteresisC = Math.max(0, Math.min(20, Number(u.hysteresisC ?? 3)));
+  u.repeatMs = Math.max(60000, Number(u.repeatMs ?? 1800000));
+  u.windowSeconds = Math.max(10, Math.min(600, Number(u.windowSeconds ?? 60)));
+  // 采样间隔决定窗口内有多少个样本点
+  u.intervalMs = Math.max(1000, Number(config.monitor?.intervalMs ?? 5000));
+  u.windowSamples = Math.max(2, Math.round(u.windowSeconds * 1000 / u.intervalMs));
+  u.minSustained = Math.max(1, Math.min(u.windowSamples, Math.round(Number(u.minSustained ?? 5))));
+  return u;
+}
+
+/** 持久化温度推送配置。 */
+export function saveTempAlertConfig(u) {
+  if (!u || typeof u !== 'object') return getTempAlertConfig();
+  const base = { ...config.monitor.tempAlert };
+  const merged = normalizeTempAlert({ ...base, ...u });
+  setSetting('monitor.tempAlert', JSON.stringify(merged));
+  addLog('info', 'notify', 'temperature alert config updated');
+  return merged;
+}
+
 export function getNotifyConfig() {
   return {
     enabled: getSetting('notify.enabled', String(config.notify.enabled)) === 'true',
@@ -45,6 +116,8 @@ export function getNotifyConfig() {
     telegramChatId: getSetting('notify.telegram.chatId', ''),
     serverChanKeySet: !!getSetting('notify.serverchan.key', ''),
     endpoint: getSetting('notify.endpoint', ''),
+    sessionTurns: getSessionTurnsConfig(),
+    tempAlert: getTempAlertConfig(),
     logFile: NOTIFY_LOG
   };
 }
@@ -59,6 +132,20 @@ export function saveNotifyConfig(cfg) {
   if (cfg.telegramChatId !== undefined) setSetting('notify.telegram.chatId', cfg.telegramChatId);
   if (cfg.serverChanKey) setSetting('notify.serverchan.key', cfg.serverChanKey);
   if (cfg.endpoint !== undefined) setSetting('notify.endpoint', cfg.endpoint);
+  if (cfg.sessionTurns && typeof cfg.sessionTurns === 'object') {
+    const base = { ...config.notify.sessionTurns };
+    const merged = { ...base, ...cfg.sessionTurns };
+    // 规整类型，避免前端传脏值
+    merged.intervalMs = Math.max(1000, Number(merged.intervalMs) || 3000);
+    merged.maxPromptChars = Math.max(0, Math.min(500, Number(merged.maxPromptChars) || 120));
+    if (!Array.isArray(merged.ignoreWorkspaces)) merged.ignoreWorkspaces = [];
+    merged.enabled = !!merged.enabled;
+    merged.onCompleted = !!merged.onCompleted;
+    merged.onFailed = !!merged.onFailed;
+    merged.onAborted = !!merged.onAborted;
+    setSetting('notify.sessionTurns', JSON.stringify(merged));
+  }
+  if (cfg.tempAlert && typeof cfg.tempAlert === 'object') saveTempAlertConfig(cfg.tempAlert);
   addLog('info', 'notify', 'notification config updated');
   return getNotifyConfig();
 }
@@ -102,6 +189,23 @@ function formatParts(event, data) {
     case 'test':
       title = '🧪 测试推送';
       body = '这是一条来自 DSH 控制中心的测试通知';
+      break;
+    case 'session.turn.end': {
+      const ws = data.workspace || '未知工作区';
+      const conv = data.title
+        || (data.sessionId ? String(data.sessionId).replace(/^session-/, '').slice(0, 12) + '…' : '对话');
+      const turnTag = data.turn != null ? '（第 ' + data.turn + ' 轮）' : '';
+      const promptTag = data.prompt ? '\n指令：' + data.prompt : '';
+      const okTurn = data.reasonKind === 'completed';
+      title = okTurn ? '✅ DSH 对话完成' : '❌ DSH 对话异常结束';
+      body = '工作区：' + ws + '\n对话：' + conv + turnTag;
+      if (!okTurn) body += '\n原因：' + describeTurnEnd(data.reasonKind, data.reasonDetail);
+      body += promptTag;
+      break;
+    }
+    case 'session.watcher.error':
+      title = '⚠️ 会话监听异常';
+      body = data.message || '工作区对话监听出现问题';
       break;
     default:
       body = event + ' ' + JSON.stringify(data);

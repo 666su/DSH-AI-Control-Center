@@ -30,7 +30,9 @@
 4. **手机控制** — 响应式界面 + 控制按钮：[继续执行] [暂停任务] [发送指令] [重启DSH]
 5. **自动恢复** — `monitor.js` 每 30 秒检查 DSH 端口 + 进程，异常自动重启，记录 `logs/recovery.log`（企业级健康检测，见下文）
 6. **通知推送** — Telegram / Server酱(微信) / Webhook 三通道；任务完成/失败、DSH 会话异常自动推送到手机（设置页可配）
-7. **后台运行** — NSSM 服务化脚本（`scripts/install-service.bat`），开机自启、无 CMD 窗口
+7. **工作区对话推送** — 监听 DSH Web 界面里的工作区会话日志，每轮回复结束（完成 / 出错 / 输出超长 / 手动停止）推送一条，含本轮用户指令摘要；任务页创建的单次指令不会重复推送
+8. **CPU / GPU 温度监控** — 独立温度卡 + 历史曲线（1h / 6h / 24h），高温告警可走通知通道；告警判定用**滚动窗口计数**（默认 60 秒窗口内 ≥5 次超阈值），抗负载型 CPU 的温度振荡，不会刷屏
+9. **后台运行** — NSSM 服务化脚本（`scripts/install-service.bat`），开机自启、无 CMD 窗口
 
 ---
 
@@ -169,6 +171,10 @@ DSH 原生 Web 拥有全部操作能力（会话、工作区、智能体），**
 | POST | /api/tasks/:id/control | 暂停 / 继续 / 取消任务 |
 | GET | /api/logs | 日志查询 |
 | GET | /api/monitor/status | 恢复守护实时状态 |
+| GET | /api/sessions/turns | 最近的工作区对话结束记录（`?limit=30&workspace=...`） |
+| GET | /api/sessions/watcher | 会话监听器状态（跟踪文件数、已推送/已跳过统计） |
+| POST | /api/sessions/restart | 按最新配置重启监听器 |
+| POST | /api/sessions/test | 发一条模拟「对话结束」推送，验证通道 |
 
 ---
 
@@ -193,6 +199,9 @@ DSH 原生 Web 拥有全部操作能力（会话、工作区、智能体），**
 | `dsh.proxyHosts` | [] | ⚠️ 数组，填 DSH Web 公网子域名（如 [`"dshui.YOUR_DOMAIN"`]）即启用受保护代理；支持多个域名 |
 | `dsh.serviceName` | 空 | 可选：NSSM 服务名（如 `DeepSeekHarness`）。填写后启停/恢复走 net start/stop，留空走 npx 直接启动 |
 | `recovery.*` | 见模板 | 恢复策略（连续失败阈值 3、冷却 30/60/120s、熔断上限 3） |
+| `monitor.tempAlert.*` | 见模板 | 温度推送：`enabled` / `gpuC`(80) / `cpuC`(90) / `hysteresisC`(3) / `repeatMs`(30 分钟) / `onHigh` / `onStillHigh` / `onRecovered`(默认关) / `windowSeconds`(60) / `minSustained`(5)。判定用滚动窗口：窗口内 ≥`minSustained` 次超阈值才判高温；降温需窗口内大部分采样低于「阈值-迟滞」 |
+| `notify.sessionTurns.*` | 见模板 | 工作区对话推送：`enabled` / `sessionsRoot`(留空自动定位 `%USERPROFILE%\.dsh\sessions`) / `intervalMs`(3000) / `backfillHours`(24) / `onCompleted` / `onFailed` / `onAborted`(默认关) / `ignoreWorkspaces`(路径包含匹配) / `maxPromptChars`(120) |
+| `notify.*` | 见模板 | 通知通道总开关（`enabled`）与通道列表（`channels`），以及 Telegram / Server酱 / Webhook 凭证 |
 
 ---
 
@@ -203,7 +212,7 @@ DSH 原生 Web 拥有全部操作能力（会话、工作区、智能体），**
 | `logs\recovery.log` | 恢复守护结构化事件日志 |
 | `logs\monitor-state.json` | 守护实时状态快照（/api/monitor/status 读取） |
 | `logs\notify.log` | 熔断告警 |
-| `backend\data\control-center.db` | SQLite 数据库（tasks / logs / system_stats / settings） |
+| `backend\data\control-center.db` | SQLite 数据库（tasks / logs / system_stats / settings / session_turns） |
 
 ---
 

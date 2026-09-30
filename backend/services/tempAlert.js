@@ -1,37 +1,55 @@
-import { config } from '../config.js';
 import { addLog } from '../database/db.js';
-import { sendNotification } from './notifyService.js';
+import { getTempAlertConfig, sendNotification } from './notifyService.js';
 
 /**
- * 温度告警状态机。
+ * 温度告警状态机（滚动窗口防抖版）。
  *
- * 策略（与用户确认）：
- *   - 进入高温：立即推送 1 次
- *   - 持续高温：每 repeatMs（默认 30 分钟）最多再提醒 1 次
- *   - 降温恢复：降到「阈值 - 迟滞」以下时推送 1 次
- *   - 迟滞（默认 3°C）用于防止在阈值附近反复抖动造成刷屏
+ * 为什么不用「连续 N 次」：
+ *   负载型 CPU 的温度是**振荡**的，实测序列 87,91,73,91,86,94,91,67,92,71,91,64,99,63,100
+ *   （每 5 秒一次）。这种波形下「连续 2 次 ≥90」几乎不成立、「连续 2 次 ≤87」也不成立，
+ *   结果要么是告警永不触发，要么是一旦进入高温就永远回不到正常（badge 卡在 🔥）。
+ *
+ * 改用**滚动窗口 + 计数占比**（业界常见做法，类似 5 分钟移动平均）：
+ *   进入高温：最近 windowSamples 次采样里，有 >= minSustained 次 ≥ 阈值
+ *   降温恢复：最近 windowSamples 次采样里，有 >= windowSamples - minSustained + 1 次 ≤ 阈值 - 迟滞
+ *
+ * 窗口 60 秒、minSustained=5（≈12 次采样里的 5 次 = 42%）时：
+ *   - 87,91,73,91,86,94,91,67,92,71,91,64,99,63,100 → 窗口内 ≥90 共 8 次 → 判高温（正确：确实反复烫）
+ *   - 88,95,80,82（单次尖峰）        → 窗口内 ≥90 仅 1 次 → 不告警（正确：尖峰忽略）
+ *   - 93,94,92,91,90,91,93,92（持续高温）→ 8 次全超 → 判高温（正确）
+ *
+ * 推送策略：
+ *   进入高温：推 1 次（onHigh）
+ *   持续高温：每 repeatMs 最多再提醒 1 次（onStillHigh）
+ *   降温恢复：推 1 次（onRecovered，默认关 —— 这类消息没有可行动信息，是最主要的刷屏源）
  *
  * 状态保存在内存中：控制中心重启后重新武装（不会重复补推历史告警）。
+ * 窗口长度或判定参数变化时自动重置状态，避免用旧口径继续判定。
  */
 
+const DEFAULT_INTERVAL_MS = 5000;
+
 const state = {
-  gpu: { level: 'normal', lastNotifyAt: 0, lastValue: null, lastNotifiedValue: null },
-  cpu: { level: 'normal', lastNotifyAt: 0, lastValue: null, lastNotifiedValue: null }
+  gpu: { level: 'normal', samples: [], lastNotifyAt: 0, lastValue: null },
+  cpu: { level: 'normal', samples: [], lastNotifyAt: 0, lastValue: null }
 };
 
-function alertConfig() {
-  return config.monitor?.tempAlert || {};
+/** 配置指纹：判定参数变了就重置窗口，避免新旧口径混用。 */
+function configFingerprint(cfg) {
+  return [cfg.cpuC, cfg.gpuC, cfg.hysteresisC, cfg.minSustained, cfg.windowSeconds].join('|');
+}
+let currentFingerprint = null;
+
+function pushSample(sensor, value, cfg) {
+  const st = state[sensor.key];
+  st.lastValue = value;
+  st.samples.push(value);
+  const windowSamples = cfg.windowSamples;
+  while (st.samples.length > windowSamples) st.samples.shift();
+  return st.samples;
 }
 
-function buildSensors(snap) {
-  const cfg = alertConfig();
-  return [
-    { key: 'gpu', label: 'GPU', value: snap?.temps?.gpuC ?? null, threshold: cfg.gpuC ?? 80 },
-    { key: 'cpu', label: 'CPU', value: snap?.temps?.cpuC ?? null, threshold: cfg.cpuC ?? 90 }
-  ];
-}
-
-function notify(event, sensor, phase) {
+function notify(event, sensor, phase, cfg) {
   addLog(
     event === 'temp.high' ? 'warn' : 'info',
     'temp',
@@ -44,7 +62,11 @@ function notify(event, sensor, phase) {
     label: sensor.label,
     value: sensor.value,
     threshold: sensor.threshold,
-    phase
+    phase,
+    windowAbove: sensor.windowAbove,
+    windowTotal: sensor.windowTotal,
+    windowMax: sensor.windowMax,
+    windowMin: sensor.windowMin
   })).catch(() => { /* 通知失败不影响监控 */ });
 }
 
@@ -53,48 +75,97 @@ function notify(event, sensor, phase) {
  * @param {object} snap systemMonitor 产出的快照
  */
 export function checkTemperatureAlerts(snap) {
-  const cfg = alertConfig();
+  const cfg = getTempAlertConfig();
   if (cfg.enabled === false) return;
 
-  const hysteresis = Number(cfg.hysteresisC ?? 3);
-  const repeatMs = Number(cfg.repeatMs ?? 1800000);
-  const now = Date.now();
+  const fp = configFingerprint(cfg);
+  if (currentFingerprint !== null && fp !== currentFingerprint) {
+    for (const k of Object.keys(state)) {
+      state[k].level = 'normal';
+      state[k].samples = [];
+      state[k].lastNotifyAt = 0;
+    }
+  }
+  currentFingerprint = fp;
 
-  for (const sensor of buildSensors(snap)) {
+  const now = Date.now();
+  const recLineOffset = cfg.hysteresisC;
+  const windowSamples = cfg.windowSamples;
+  const hotNeed = cfg.minSustained;
+  const coolNeed = Math.max(1, windowSamples - cfg.minSustained + 1);
+
+  const sensors = [
+    { key: 'gpu', label: 'GPU', value: snap?.temps?.gpuC ?? null, threshold: cfg.gpuC },
+    { key: 'cpu', label: 'CPU', value: snap?.temps?.cpuC ?? null, threshold: cfg.cpuC }
+  ];
+
+  for (const sensor of sensors) {
+    if (sensor.value == null || !Number.isFinite(sensor.value)) continue; // 传感器掉线不动作
+    const window = pushSample(sensor, sensor.value, cfg);
+    const recLine = sensor.threshold - recLineOffset;
+    const above = window.filter(v => v >= sensor.threshold).length;
+    const below = window.filter(v => v <= recLine).length;
     const st = state[sensor.key];
-    if (sensor.value == null || !Number.isFinite(sensor.value)) continue;
-    st.lastValue = sensor.value;
 
     if (st.level === 'normal') {
-      if (sensor.value >= sensor.threshold) {
+      if (window.length >= windowSamples && above >= hotNeed) {
         st.level = 'high';
         st.lastNotifyAt = now;
-        st.lastNotifiedValue = sensor.value;
-        notify('temp.high', sensor, 'entered');
+        if (cfg.onHigh) notify('temp.high', { ...sensor, windowAbove: above, windowTotal: window.length, windowMax: Math.max(...window), windowMin: Math.min(...window) }, 'entered', cfg);
       }
-    } else if (sensor.value <= sensor.threshold - hysteresis) {
+    } else if (window.length >= windowSamples && below >= coolNeed) {
       st.level = 'normal';
+      st.lastNotifyAt = 0;
+      if (cfg.onRecovered) notify('temp.recovered', { ...sensor, windowAbove: above, windowTotal: window.length, windowMax: Math.max(...window), windowMin: Math.min(...window) }, 'recovered', cfg);
+    } else if (cfg.onStillHigh && now - st.lastNotifyAt >= cfg.repeatMs) {
       st.lastNotifyAt = now;
-      notify('temp.recovered', sensor, 'recovered');
-    } else if (now - st.lastNotifyAt >= repeatMs) {
-      st.lastNotifyAt = now;
-      st.lastNotifiedValue = sensor.value;
-      notify('temp.high', sensor, 'still high');
+      notify('temp.high', { ...sensor, windowAbove: above, windowTotal: window.length, windowMax: Math.max(...window), windowMin: Math.min(...window) }, 'still high', cfg);
     }
+  }
+}
+
+/** 重置状态机（配置变化或面板手动操作时使用）。 */
+export function resetTempAlertState() {
+  currentFingerprint = null;
+  for (const k of Object.keys(state)) {
+    state[k].level = 'normal';
+    state[k].samples = [];
+    state[k].lastNotifyAt = 0;
   }
 }
 
 /** 供 API / 面板展示当前告警状态。 */
 export function getTempAlertState() {
-  const cfg = alertConfig();
+  const cfg = getTempAlertConfig();
+  const mk = (k, threshold) => {
+    const st = state[k];
+    const recLine = threshold - cfg.hysteresisC;
+    return {
+      level: st.level,
+      lastValue: st.lastValue,
+      samples: st.samples.slice(),
+      sampleCount: st.samples.length,
+      windowAbove: st.samples.filter(v => v >= threshold).length,
+      windowBelowRecover: st.samples.filter(v => v <= recLine).length,
+      windowMax: st.samples.length ? Math.max(...st.samples) : null,
+      windowMin: st.samples.length ? Math.min(...st.samples) : null,
+      hotNeed: cfg.minSustained,
+      coolNeed: Math.max(1, cfg.windowSamples - cfg.minSustained + 1),
+      lastNotifyAt: st.lastNotifyAt || null
+    };
+  };
   return {
-    enabled: cfg.enabled !== false,
-    thresholds: { gpuC: cfg.gpuC ?? 80, cpuC: cfg.cpuC ?? 90 },
-    hysteresisC: cfg.hysteresisC ?? 3,
-    repeatMs: cfg.repeatMs ?? 1800000,
-    sensors: {
-      gpu: { level: state.gpu.level, lastValue: state.gpu.lastValue, lastNotifyAt: state.gpu.lastNotifyAt || null },
-      cpu: { level: state.cpu.level, lastValue: state.cpu.lastValue, lastNotifyAt: state.cpu.lastNotifyAt || null }
-    }
+    enabled: cfg.enabled,
+    thresholds: { gpuC: cfg.gpuC, cpuC: cfg.cpuC },
+    hysteresisC: cfg.hysteresisC,
+    repeatMs: cfg.repeatMs,
+    minSustained: cfg.minSustained,
+    windowSeconds: cfg.windowSeconds,
+    windowSamples: cfg.windowSamples,
+    intervalMs: cfg.intervalMs,
+    onHigh: cfg.onHigh,
+    onStillHigh: cfg.onStillHigh,
+    onRecovered: cfg.onRecovered,
+    sensors: { gpu: mk('gpu', cfg.gpuC), cpu: mk('cpu', cfg.cpuC) }
   };
 }

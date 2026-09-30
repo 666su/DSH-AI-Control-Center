@@ -52,5 +52,11 @@ export const api = {
   addLog: (payload) => request('/logs', { method: 'POST', body: JSON.stringify(payload) }),
   notifyConfig: () => request('/notify/config'),
   saveNotify: (payload) => request('/notify/config', { method: 'POST', body: JSON.stringify(payload) }),
-  testNotify: () => request('/notify/test', { method: 'POST' })
+  testNotify: () => request('/notify/test', { method: 'POST' }),
+
+  // 工作区对话推送（DSH Web 会话 turn/end）
+  sessionTurns: (params = '') => request('/sessions/turns' + params),
+  sessionWatcher: () => request('/sessions/watcher'),
+  restartSessions: () => request('/sessions/restart', { method: 'POST' }),
+  testSessionTurn: () => request('/sessions/test', { method: 'POST' })
 };
