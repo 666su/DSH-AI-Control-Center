@@ -4,6 +4,44 @@
 
 ---
 
+## 运维事故记录 — 2026-10-08
+
+### 🚨 公网域名 1033 事故（控制中心 + Web 界面全部进不去）
+
+#### 现象
+- 公网域名返回 Cloudflare Error 1033（`Cloudflare is currently unable to resolve it`），手机打不开网页
+- 本机 `127.0.0.1:3081` / `127.0.0.1:3080` 本地访问正常，DSH 三个服务都在 RUNNING，守护进程判定 DSH 健康
+- 一开始按「重启 DSH 服务」处理无效——问题不在 DSH 进程，在 Cloudflare 隧道
+
+#### 根因
+- **Cloudflared 单服务只跑一条隧道**：Windows 服务 `Cloudflared` 一个实例只能跑一条隧道。
+  服务用的 token 文件 `C:\ProgramData\cloudflared\token` 被覆盖成了**一个不属于 DSH 的 token**，
+  服务从此一直跑错隧道，DSH 域名彻底失联
+- **本地 config.yml 与控制台错位**：本地 `config.yml` 指向的隧道与控制台实际绑定 DSH 域名的隧道不是同一个，
+  DSH 域名的 ingress 绑定只存在 Cloudflare 控制台侧
+- `scripts/install-cloudflared.bat` 里 `TOKEN=REPLACE_WITH_YOUR_TUNNEL_TOKEN` 是占位符，
+  服务从未被正式用脚本重装过，token 一直是手工写的
+- **DSHControlMonitor 守护不覆盖公网**：守护只监控 DSH Web 端口 3080（内网进程），
+  不监控公网隧道连通性，隧道挂了它不会有任何反应
+
+#### 解决方案
+1. **确认控制台侧绑定**：从 Cloudflare 控制台取到 DSH 隧道的 token，
+   用 `cloudflared tunnel run --token <token>` 诊断运行，从启动日志确认 ingress 规则里确实绑着 DSH 域名 → 3081。
+   诊断进程注册 QUIC 连接后，URL 立刻返回 HTTP 200
+2. **DSH 隧道独占一个 Windows 服务**：把 DSH 隧道 token 写回 `C:\ProgramData\cloudflared\token`，重启服务，
+   让 DSH 域名恢复；并确认这个服务名不再被别的隧道共用
+3. **验证**：公网域名返回 200，`cloudflared tunnel list` 显示 DSH 隧道有连接
+
+#### 后续加固建议
+- `scripts/install-cloudflared.bat` 的 `TOKEN` 占位符换成实际 DSH 隧道 token，并改为读配置文件
+  （如 `config/cloudflared-token.txt`），避免下次重装又写错 token
+- DSHControlMonitor 增加「公网隧道连通性」探测项：定时请求公网域名，
+  若返回 Cloudflare 5xx/1033，触发重启 Cloudflared 服务（而不是重启 DSH Web 进程）
+- 本地 `config.yml` 停止维护，改为完全以控制台（或 token）为准，避免「本地配置说 A、控制台说 B」
+- 若机器上还跑着其他 cloudflared 隧道，务必用**不同的 Windows 服务名**，避免单服务名冲突导致本项目隧道被覆盖
+
+---
+
 ## v1.4.0 — 2026-09-30
 
 ### 🆕 新功能
